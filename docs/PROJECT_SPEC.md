@@ -44,7 +44,7 @@
                                 ▼                                                         │
  ┌─────────────┐   GET /health  ┌──────────────────────────────────────────────────────────┴───────────────┐
  │ UptimeRobot │ ─────────────▶ │ Render (Free Web Service, Docker) — apps/api FastAPI                    │
- │ (5분 간격)   │  슬립 방지       │  yt-dlp(360p) → Gemini 2.0 Flash(JSON Schema) → ffmpeg 프레임 → Pillow WebP │
+ │ (5분 간격)   │  슬립 방지       │  yt-dlp(360p) → Gemini 3.8 Flash(JSON Schema) → ffmpeg 프레임 → Pillow WebP │
  └─────────────┘                └──────────────┬───────────────────────────────┬───────────────────────────┘
                                                │ asyncpg (Pooler 6543)          │ HTTPS
                                                ▼                                ▼
@@ -61,7 +61,7 @@
 | 백엔드 | Render Free (Docker) | 15분 무요청 시 슬립 → UptimeRobot 이 `/health` 5분 간격 핑 |
 | 스토리지 | Cloudflare R2 | 10GB / 월 100만 Class A. Egress 무료. 이미지 30~50KB WebP 로 억제 |
 | DB | Supabase Free | 500MB. 영상 원본 미저장, 메타데이터만 저장 |
-| AI | Gemini 2.0 Flash | 무료 티어 RPM/RPD. **5회 앙상블 후 동결(Lock)** 으로 호출 상한 고정, URL 캐시 |
+| AI | Gemini 3.8 Flash | 무료 티어 RPM/RPD. **5회 앙상블 후 동결(Lock)** 으로 호출 상한 고정, URL 캐시 |
 
 ### 2.1 모노레포 구조
 

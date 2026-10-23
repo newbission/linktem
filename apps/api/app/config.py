@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # --- Gemini ---
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.8-flash"
     gemini_temperature: float = 0.2
     gemini_timeout_sec: int = 180
     # 유튜브는 Gemini 가 URL 을 직접 읽게 하고 다운로드는 캡처용으로 병렬 진행

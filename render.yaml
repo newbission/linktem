@@ -16,7 +16,9 @@ services:
       - key: CORS_ORIGINS
         value: https://linktem.vercel.app
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+        value: gemini-3.8-flash
+      - key: STORAGE_BACKEND
+        value: r2
       - key: R2_BUCKET
         value: linktem
       - key: ADMIN_TOKEN

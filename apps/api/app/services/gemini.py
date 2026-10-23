@@ -1,4 +1,4 @@
-"""Gemini 2.0 Flash 영상 분석 — JSON Schema 구조화 출력으로 상품 목록 추출.
+"""Gemini 3.8 Flash 영상 분석 — JSON Schema 구조화 출력으로 상품 목록 추출.
 
 입력 경로 두 가지:
 - 유튜브: Gemini 가 공개 유튜브 URL 을 직접 읽음 (업로드 생략, 다운로드와 병렬 실행 가능)

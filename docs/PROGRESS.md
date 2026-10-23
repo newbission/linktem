@@ -31,7 +31,7 @@
 - [x] `app/db.py`, `app/repositories.py` — asyncpg 데이터 계층
 - [x] `app/services/url_utils.py` — URL 정규화 / 플랫폼 화이트리스트(SSRF 방지)
 - [x] `app/services/downloader.py` — yt-dlp `bv*[height<=360]+ba/…/wv*+wa/w`, 길이 사전 검사
-- [x] `app/services/gemini.py` — Gemini 2.0 Flash, JSON Schema 구조화 출력, 유튜브 URL 직접 입력 + Files API 폴백
+- [x] `app/services/gemini.py` — Gemini 3.8 Flash, JSON Schema 구조화 출력, 유튜브 URL 직접 입력 + Files API 폴백
 - [x] `app/services/image_processor.py` — ffmpeg ±0.4초 3프레임 중 최선명 선택 → 720p WebP q75 (목표 ≤50KB)
 - [x] `app/services/storage.py` — R2 업로드 / 일괄 삭제 / 만료 이미지 정리
 - [~] ~~`app/services/affiliate.py` — 쿠팡 파트너스 딥링크~~ → 사이트 게재 후 재도입하기로 하고 제거 (ADR-013)
@@ -71,7 +71,11 @@
 
 ## 배포 체크리스트
 
-- [ ] Supabase 프로젝트 생성 → `apps/api/migrations/001_init.sql` 실행 → Pooler URL 확보
+> 단계별 상세: [`DEPLOY.md`](DEPLOY.md)
+
+- [x] git 저장소 초기화 + 첫 커밋 (2026-10-23)
+- [ ] GitHub private 저장소 생성 + push
+- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql` 실행 → Pooler URL 확보
 - [ ] Cloudflare R2 버킷 `linktem` + 공개 도메인 + CORS (PROJECT_SPEC §6) + API 토큰
 - [ ] Render: `render.yaml` Blueprint 로 서비스 생성, `sync: false` 환경변수 입력, 첫 배포에서 `docker build` 확인
 - [ ] UptimeRobot: `https://<api>/health` 5분 간격
@@ -189,7 +193,7 @@
 | `CLIENT_HASH_SALT` | `openssl rand -hex 16` | 익명 요청자 해시 솔트 |
 | `DATABASE_URL` | `postgresql://postgres.<ref>:<pw>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres` | Supabase Pooler |
 | `GEMINI_API_KEY` | | Google AI Studio |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | |
 | `GEMINI_USE_YOUTUBE_URL` | `true` | ADR-008 |
 | `MAX_VIDEO_DURATION_SEC` | `1200` | 20분 |
 | `YTDLP_PROXY` / `YTDLP_COOKIES_B64` | | 봇 차단/로그인 대응 |
