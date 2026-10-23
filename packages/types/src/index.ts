@@ -60,6 +60,53 @@ export interface VideoAnalysisResponse {
 }
 
 // ---------------------------------------------------------------------------
+// 백그라운드 분석 작업
+// ---------------------------------------------------------------------------
+
+/** queued: 순서 대기 / running: 진행 중 / done: 완료 / failed: 실패 */
+export type AnalysisJobStatus = 'queued' | 'running' | 'done' | 'failed';
+
+/** 진행 단계 — 화면의 단계 표시용 */
+export type AnalysisJobStage = 'queued' | 'downloading' | 'analyzing' | 'capturing' | 'saving' | 'done' | 'failed';
+
+/** 처음 보는 영상의 1회차 분석 작업 (서버 메모리가 아닌 DB 에 기록되어 앱을 닫았다 열어도 조회 가능) */
+export interface AnalysisJob {
+  /** analysis_jobs.id (UUID) */
+  job_id: string;
+  /** 정규화된 원본 영상 URL */
+  source_url: string;
+  status: AnalysisJobStatus;
+  stage: AnalysisJobStage;
+  /** 실패 시 사용자에게 보여줄 사유 */
+  error?: string;
+  /** 실패 상태 코드 (422: 상품을 찾지 못함, 413: 영상이 너무 김, 502: 외부 서비스 실패 등) */
+  error_code?: number;
+  /** 완료 시 결과 영상 ID */
+  video_id?: string;
+  /** ISO 8601 */
+  created_at: string;
+  /** ISO 8601 */
+  updated_at: string;
+}
+
+/**
+ * POST /api/analyze, GET /api/jobs/{job_id} 응답.
+ * - 이미 분석된 영상: video 만 (즉시 표시)
+ * - 처음 보는 영상: job 만 (GET /api/jobs/{job_id} 로 진행 상황 조회)
+ * - 작업 완료 후 조회: job + video
+ */
+export interface AnalyzeResponse {
+  job?: AnalysisJob;
+  video?: VideoAnalysisResponse;
+}
+
+/** GET /api/videos?ids=... 응답 — 리스트에 있는 영상의 최신 결과 (회차를 올리지 않는 조회 전용) */
+export interface VideoLookupResponse {
+  /** 존재하는 영상만 포함 (삭제된 ID 는 빠짐) */
+  videos: VideoAnalysisResponse[];
+}
+
+// ---------------------------------------------------------------------------
 // 피드백
 // ---------------------------------------------------------------------------
 

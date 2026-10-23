@@ -6,11 +6,11 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { extractUrl, isSupportedUrl } from '@/lib/share';
 
 interface Props {
-  /** 분석 진행 중 — 입력/버튼 잠금, 버튼은 스피너 */
+  /** 링크 접수 중 (분석 자체는 백그라운드) — 입력/버튼 잠금, 버튼은 스피너 */
   loading?: boolean;
   /** 오프라인 등으로 분석 불가 */
   disabled?: boolean;
-  /** 분석 성공 시 true — 성공했을 때만 입력창을 비운다 */
+  /** 접수 성공 시 true — 성공했을 때만 입력창을 비운다 */
   onSubmit: (url: string) => Promise<boolean>;
 }
 
@@ -126,7 +126,7 @@ export function UrlInputForm({ loading = false, disabled = false, onSubmit }: Pr
           {loading ? (
             <>
               <LoaderCircle size={16} className="animate-spin" aria-hidden />
-              분석 중
+              접수 중
             </>
           ) : (
             <>

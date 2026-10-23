@@ -162,18 +162,34 @@ class GeminiAnalyzer:
         # 앙상블 다양성 확보: 회차가 올라갈수록 조금씩 다양하게 샘플링 (1회차는 가장 보수적)
         return min(0.8, self._settings.gemini_temperature + 0.15 * max(0, run_index - 1))
 
-    async def _generate(self, video_part: types.Part, run_index: int, duration: int | None) -> list[dict[str, Any]]:
-        client = self._require_client()
-        prompt = "이 영상에서 장보기 체크리스트에 넣을 상품을 추출하세요."
-        if duration:
-            prompt += f" 영상 길이는 {duration}초이며 timestamp_sec 은 0~{duration} 범위여야 합니다."
-        config = types.GenerateContentConfig(
+    def _config(self, run_index: int, *, tuned: bool) -> types.GenerateContentConfig:
+        extra: dict[str, Any] = {}
+        if tuned:
+            if self._settings.gemini_thinking_level:
+                extra["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel[self._settings.gemini_thinking_level.upper()]
+                )
+            extra["media_resolution"] = types.MediaResolution[
+                f"MEDIA_RESOLUTION_{self._settings.gemini_media_resolution.upper()}"
+            ]
+        return types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
             temperature=self._temperature(run_index),
             response_mime_type="application/json",
             response_schema=RESPONSE_SCHEMA,
             max_output_tokens=8192,
+            # 함수 호출 도구를 쓰지 않으므로 자동 함수 호출(AFC) 비활성
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            **extra,
         )
+
+    async def _generate(self, video_part: types.Part, run_index: int, duration: int | None) -> list[dict[str, Any]]:
+        client = self._require_client()
+        prompt = "이 영상에서 장보기 체크리스트에 넣을 상품을 추출하세요."
+        if duration:
+            prompt += f" 영상 길이는 {duration}초이며 timestamp_sec 은 0~{duration} 범위여야 합니다."
+        config = self._config(run_index, tuned=True)
+        tuned_off: types.GenerateContentConfig | None = None
 
         last_error: Exception | None = None
         for attempt in range(3):
@@ -188,8 +204,14 @@ class GeminiAnalyzer:
                 )
                 return self._parse(response.text or "", duration)
             except genai_errors.ClientError as exc:
+                code = getattr(exc, "code", None)
+                if code == 400 and config is not tuned_off and _mentions_tuning(exc):
+                    # 모델이 추론/해상도 옵션을 지원하지 않으면 기본 설정으로 즉시 재시도
+                    logger.warning("gemini rejected tuning options (%s) — retrying with defaults", exc)
+                    config = tuned_off = self._config(run_index, tuned=False)
+                    continue
                 # 429(쿼터)만 재시도, 그 외 4xx 는 입력 문제이므로 즉시 실패
-                if getattr(exc, "code", None) != 429:
+                if code != 429:
                     raise GeminiError(f"Gemini 요청 오류: {exc}") from exc
                 last_error = exc
             except (genai_errors.ServerError, asyncio.TimeoutError) as exc:
@@ -225,3 +247,8 @@ class GeminiAnalyzer:
                 }
             )
         return items
+
+
+def _mentions_tuning(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(word in text for word in ("thinking", "media_resolution", "media resolution"))

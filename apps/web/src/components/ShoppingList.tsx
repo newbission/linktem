@@ -21,6 +21,11 @@ interface Props {
   onRemoveVideo: (videoId: string) => void;
 }
 
+/** '내 분석 영상'에서 영상을 누르면 영상별 보기의 해당 묶음으로 스크롤 */
+export function videoGroupId(videoId: string): string {
+  return `video-group-${videoId}`;
+}
+
 export function ShoppingList({
   entries,
   tab,
@@ -40,7 +45,12 @@ export function ShoppingList({
       {groups.map((group) => {
         const done = group.entries.filter((e) => e.item.is_checked).length;
         return (
-          <section key={group.key} aria-label={group.title}>
+          <section
+            key={group.key}
+            id={group.video ? videoGroupId(group.video.video_id) : undefined}
+            aria-label={group.title}
+            className="scroll-mt-20"
+          >
             {tab !== 'all' && (
               <header className="mb-2 flex items-end justify-between gap-2 px-1">
                 <div className="min-w-0">

@@ -23,6 +23,7 @@ GitHub Actions(매일 03:00 KST) ──▶ POST /api/admin/cleanup
 2. SQL Editor 에서 순서대로 실행
    - `apps/api/migrations/001_init.sql`
    - `apps/api/migrations/002_enable_rls.sql` (공개 REST API 로 테이블이 노출되지 않게 RLS 활성화)
+   - `apps/api/migrations/003_analysis_jobs.sql` (백그라운드 분석 작업 테이블)
 3. Project Settings → Database → Connection string → **Transaction pooler (6543)** 복사
    🔑 `DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres`
    - 비밀번호에 `@ : / ?` 등이 있으면 URL 인코딩 필요

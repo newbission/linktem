@@ -75,7 +75,7 @@
 
 - [x] git 저장소 초기화 + 첫 커밋 (2026-10-23)
 - [ ] GitHub private 저장소 생성 + push
-- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql` 실행 → Pooler URL 확보
+- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql` 실행 → Pooler URL 확보
 - [ ] Cloudflare R2 버킷 `linktem` + 공개 도메인 + CORS (PROJECT_SPEC §6) + API 토큰
 - [ ] Render: `render.yaml` Blueprint 로 서비스 생성, `sync: false` 환경변수 입력, 첫 배포에서 `docker build` 확인
 - [ ] UptimeRobot: `https://<api>/health` 5분 간격
@@ -181,6 +181,20 @@
   ⑥ `COUPANG_ACCESS_KEY / SECRET_KEY / SUB_ID` 를 env 예시·render.yaml 에 추가.
 - 로컬 docker DB 에는 기존 `products.affiliate_url` 컬럼이 남아 있어도 코드가 참조하지 않으므로 무해 (`docker compose down -v` 로 초기화 가능).
 
+### ADR-014. 1회차 분석을 백그라운드 작업(analysis_jobs)으로 분리
+- 문제: 1회차 분석(다운로드 + Gemini 1~2분 + 캡처)을 HTTP 요청 하나로 기다리다 보니, 화면 꺼짐·앱 전환·네트워크 변경으로
+  연결이 끊기면 서버는 성공해도 화면은 "연결할 수 없어요"로 끝났다. 앱을 열 때마다 미확정 영상을 /api/analyze 로
+  재조회해 분당 레이트 리밋(6회)을 소모하는 문제도 있었다.
+- 결정: `POST /api/analyze` 는 캐시면 `{video}`, 처음 보는 영상이면 작업을 만들고 `{job}` 을 즉시 반환.
+  작업은 서버 프로세스에서 실행하며 단계(queued → downloading → analyzing → capturing → saving → done/failed)를 DB 에 기록.
+  클라이언트는 `GET /api/jobs/{id}` 를 2.5초 간격으로 조회(레이트 리밋 없음)하고 작업 목록을 localStorage 에 보관 →
+  앱을 닫았다 열어도 이어서 결과를 받는다. 같은 영상의 진행 중 작업은 DB 유니크 인덱스로 1개만 (동시 요청 공유).
+- 서버 재시작으로 중단된 작업은 시작 시 실패로 정리(작업은 메모리에서 실행되므로 이어갈 수 없음) → 사용자는 '다시 시도'.
+- 리스트 갱신은 `GET /api/videos?ids=` 한 번으로 (회차를 올리지 않는 조회 전용).
+- 화면: 분석 중 리스트 잠금 제거, '내 분석 영상'(진행 중·실패·완료 영상 목록) 추가.
+- 속도: `GEMINI_THINKING_LEVEL=low`, `GEMINI_MEDIA_RESOLUTION=low` (모델이 거부하면 기본 설정으로 자동 재시도).
+  같은 인스타 영상(4.9MB, 상품 19개) 기준 Gemini 응답 124초 → 86초.
+
 ## 환경변수 템플릿
 
 ### apps/api (`apps/api/.env.example`)
@@ -195,6 +209,7 @@
 | `GEMINI_API_KEY` | | Google AI Studio |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | |
 | `GEMINI_USE_YOUTUBE_URL` | `true` | ADR-008 |
+| `GEMINI_THINKING_LEVEL` / `GEMINI_MEDIA_RESOLUTION` | `low` / `low` | 응답 속도 (ADR-014) |
 | `MAX_VIDEO_DURATION_SEC` | `1200` | 20분 |
 | `YTDLP_PROXY` / `YTDLP_COOKIES_B64` | | 봇 차단/로그인 대응 |
 | `STORAGE_BACKEND` | `auto` / `local` / `r2` | auto: R2 키 있으면 R2, 없으면 로컬 |

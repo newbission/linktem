@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -20,15 +20,16 @@ from app.config import Settings, get_settings
 from app.db import create_pool
 from app.rate_limit import SlidingWindowLimiter, client_hash, client_ip
 from app.schemas import (
+    AnalyzeResponse,
     CleanupResponse,
     HealthResponse,
     RelatedVideosResponse,
     UserFeedbackRequest,
     UserFeedbackResponse,
     VideoAnalysisRequest,
-    VideoAnalysisResponse,
+    VideoLookupResponse,
 )
-from app.services.analyzer import AnalysisError, Analyzer
+from app.services.analyzer import MAX_LOOKUP_IDS, AnalysisError, Analyzer
 from app.services.downloader import VideoDownloader
 from app.services.gemini import GeminiAnalyzer
 from app.services.image_processor import ImageProcessor
@@ -59,10 +60,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.analyze_limiter = SlidingWindowLimiter(settings.analyze_rate_limit_per_min)
     app.state.feedback_limiter = SlidingWindowLimiter(30)
+    await app.state.analyzer.fail_interrupted_jobs()
     logger.info("Linktem API %s started (env=%s, db=%s)", __version__, settings.app_env, pool is not None)
     try:
         yield
     finally:
+        # 실행 중 작업을 먼저 실패로 기록한 뒤 DB 풀을 닫는다
+        await app.state.analyzer.cancel_jobs()
         if pool is not None:
             await pool.close()
 
@@ -141,16 +145,36 @@ async def health() -> HealthResponse:
     return HealthResponse(version=__version__, time=datetime.now(timezone.utc).isoformat())
 
 
-@app.post("/api/analyze", response_model=VideoAnalysisResponse, tags=["analyze"])
+@app.post("/api/analyze", response_model=AnalyzeResponse, response_model_exclude_none=True, tags=["analyze"])
 async def analyze(
     body: VideoAnalysisRequest,
     request: Request,
     background: BackgroundTasks,
     analyzer: Analyzer = Depends(get_analyzer),
     settings: Settings = Depends(settings_dep),
-) -> VideoAnalysisResponse:
+) -> AnalyzeResponse:
+    """이미 분석된 영상은 video 를 즉시, 처음 보는 영상은 job 을 즉시 반환 (분석은 백그라운드)."""
     _enforce_rate_limit(request.app.state.analyze_limiter, request)
     return await analyzer.analyze(body.url, client_hash(request, settings.client_hash_salt), background)
+
+
+@app.get("/api/jobs/{job_id}", response_model=AnalyzeResponse, response_model_exclude_none=True, tags=["analyze"])
+async def get_job(job_id: str, response: Response, analyzer: Analyzer = Depends(get_analyzer)) -> AnalyzeResponse:
+    """진행 상황 조회 (2~3초 간격 폴링용, 레이트 리밋 없음). 완료되면 video 포함."""
+    response.headers["Cache-Control"] = "no-store"
+    return await analyzer.get_job(job_id)
+
+
+@app.get("/api/videos", response_model=VideoLookupResponse, tags=["analyze"])
+async def lookup_videos(
+    response: Response,
+    ids: str = Query(..., description="쉼표로 구분한 video_id 목록", max_length=40 * MAX_LOOKUP_IDS),
+    analyzer: Analyzer = Depends(get_analyzer),
+) -> VideoLookupResponse:
+    """리스트에 있는 영상의 최신 결과 (백그라운드 앙상블 개선분 반영). 회차를 올리지 않는 조회 전용."""
+    response.headers["Cache-Control"] = "no-store"
+    videos = await analyzer.lookup_videos([i.strip() for i in ids.split(",") if i.strip()])
+    return VideoLookupResponse(videos=videos)
 
 
 @app.post("/api/feedback", response_model=UserFeedbackResponse, tags=["feedback"])

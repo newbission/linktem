@@ -2,7 +2,7 @@ import { ListChecks, Share2, ShoppingBasket } from 'lucide-react';
 
 const STEPS = [
   { icon: Share2, title: '공유하기', desc: '유튜브·인스타·틱톡에서 [공유] → Linktem 선택 (또는 링크 복사)' },
-  { icon: ShoppingBasket, title: 'AI 분석', desc: '영상 속 상품을 찾아 스틸컷·판매처·최저가를 붙여드려요' },
+  { icon: ShoppingBasket, title: 'AI 분석', desc: '영상 속 상품을 찾아 스틸컷·판매처를 붙여드려요. 분석은 앱을 닫아도 계속돼요' },
   { icon: ListChecks, title: '체크하며 장보기', desc: '오프라인 저장하면 인터넷 없이도 체크할 수 있어요' },
 ];
 

@@ -14,6 +14,9 @@ MODELS = [
     "VideoAnalysisRequest",
     "ShoppingItem",
     "VideoAnalysisResponse",
+    "AnalysisJob",
+    "AnalyzeResponse",
+    "VideoLookupResponse",
     "UserFeedbackRequest",
     "UserFeedbackResponse",
     "RelatedVideo",
@@ -60,6 +63,13 @@ def test_feedback_type_literal(ts_interfaces: dict[str, dict[str, bool]]) -> Non
     source = TS_FILE.read_text(encoding="utf-8")
     ts_values = set(re.findall(r"'(\w+)'", re.search(r"type FeedbackType = ([^;]+);", source).group(1)))
     assert ts_values == set(get_args(schemas.FeedbackType))
+
+
+@pytest.mark.parametrize("ts_type", ["AnalysisJobStatus", "AnalysisJobStage"])
+def test_job_literals(ts_type: str) -> None:
+    source = TS_FILE.read_text(encoding="utf-8")
+    ts_values = set(re.findall(r"'(\w+)'", re.search(rf"type {ts_type} = ([^;]+);", source).group(1)))
+    assert ts_values == set(get_args(getattr(schemas, ts_type)))
 
 
 def test_categories_match() -> None:

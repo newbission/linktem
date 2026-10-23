@@ -1,10 +1,11 @@
 import type {
+  AnalyzeResponse,
   ApiErrorResponse,
   RelatedVideosResponse,
   UserFeedbackRequest,
   UserFeedbackResponse,
   VideoAnalysisRequest,
-  VideoAnalysisResponse,
+  VideoLookupResponse,
 } from '@linktem/types';
 
 /**
@@ -15,8 +16,8 @@ import type {
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/+$/, '');
 const API_LABEL = API_BASE_URL || '이 사이트의 /api';
 
-// Render 무료 인스턴스 콜드 스타트(~50초) + 1회차 분석 시간을 고려
-const ANALYZE_TIMEOUT_MS = 180_000;
+// 분석은 서버 백그라운드 작업으로 돌고 요청은 작업 접수만 하므로 짧게 끝난다 (콜드 스타트는 waitForServer 가 흡수)
+const ANALYZE_TIMEOUT_MS = 30_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export class ApiError extends Error {
@@ -112,13 +113,26 @@ export async function waitForServer(options: { signal?: AbortSignal; onWaking?: 
   );
 }
 
-export function analyzeVideo(url: string, signal?: AbortSignal): Promise<VideoAnalysisResponse> {
+/** 이미 분석된 영상이면 video, 처음 보는 영상이면 job (진행 상황은 getJob 으로 조회) */
+export function analyzeVideo(url: string, signal?: AbortSignal): Promise<AnalyzeResponse> {
   const body: VideoAnalysisRequest = { url };
-  return request<VideoAnalysisResponse>('/api/analyze', {
+  return request<AnalyzeResponse>('/api/analyze', {
     method: 'POST',
     body: JSON.stringify(body),
     signal,
     timeoutMs: ANALYZE_TIMEOUT_MS,
+  });
+}
+
+/** 분석 작업 진행 상황 (완료 시 video 포함). 폴링용이라 서버 레이트 리밋 대상이 아니다. */
+export function getJob(jobId: string): Promise<AnalyzeResponse> {
+  return request<AnalyzeResponse>(`/api/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+}
+
+/** 리스트에 있는 영상들의 최신 결과 (회차를 올리지 않는 조회 전용) */
+export function lookupVideos(videoIds: string[]): Promise<VideoLookupResponse> {
+  return request<VideoLookupResponse>(`/api/videos?ids=${encodeURIComponent(videoIds.join(','))}`, {
+    cache: 'no-store',
   });
 }
 

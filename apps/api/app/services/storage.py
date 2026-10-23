@@ -29,6 +29,8 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 DELETE_BATCH = 1000  # S3 DeleteObjects 최대 키 수
+# 끝난 분석 작업 기록 보관 기간 (클라이언트는 완료 결과를 리스트에 저장하므로 짧게 둔다)
+JOB_RETENTION_DAYS = 7
 
 
 class StorageError(RuntimeError):
@@ -208,7 +210,8 @@ def superseded_expiry(settings: Settings) -> datetime:
 
 
 async def cleanup_expired_images(storage: MediaStorage, pool: asyncpg.Pool, settings: Settings) -> dict[str, int]:
-    """(a) 유예기간이 지난 SUPERSEDED 이미지 삭제 (b) 장기 미조회 영상의 이미지 삭제 → images_expired."""
+    """(a) 유예기간이 지난 SUPERSEDED 이미지 삭제 (b) 장기 미조회 영상의 이미지 삭제 → images_expired
+    (c) 오래된 분석 작업 기록 삭제."""
     superseded_deleted = 0
     async with pool.acquire() as conn:
         due = await repo.due_superseded_images(conn)
@@ -242,14 +245,19 @@ async def cleanup_expired_images(storage: MediaStorage, pool: asyncpg.Pool, sett
         expired_images += await storage.delete_keys([r["image_key"] for r in cleared])
         expired_videos += 1
 
+    async with pool.acquire() as conn:
+        jobs_deleted = await repo.delete_finished_jobs(conn, JOB_RETENTION_DAYS)
+
     logger.info(
-        "cleanup: superseded=%d expired_videos=%d expired_images=%d",
+        "cleanup: superseded=%d expired_videos=%d expired_images=%d jobs_deleted=%d",
         superseded_deleted,
         expired_videos,
         expired_images,
+        jobs_deleted,
     )
     return {
         "superseded_deleted": superseded_deleted,
         "expired_videos": expired_videos,
         "expired_images": expired_images,
+        "jobs_deleted": jobs_deleted,
     }

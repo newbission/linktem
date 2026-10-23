@@ -4,28 +4,33 @@ import { AlertCircle, CircleCheck, WifiOff, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { FeedbackType, RelatedVideo } from '@linktem/types';
+import type { AnalysisJob, FeedbackType, RelatedVideo, VideoAnalysisResponse } from '@linktem/types';
 
-import { ApiError, analyzeVideo, fetchRelated, sendFeedback, waitForServer } from '@/lib/api';
+import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, waitForServer } from '@/lib/api';
 import { toEntries, type FilterTab } from '@/lib/grouping';
 import { canonicalVideoKey } from '@/lib/share';
+import { isActiveJob, useJobPolling } from '@/lib/use-job-polling';
 import { useOfflineImages, useOnlineStatus, useShoppingList } from '@/lib/use-shopping-list';
 
 import { AdSlot } from './AdSlot';
-import { AnalysisLoading, type AnalysisPhase } from './AnalysisLoading';
 import { EmptyState } from './EmptyState';
 import { ExportListPanel } from './ExportListPanel';
 import { FilterTabs } from './FilterTabs';
 import { Footer } from './Footer';
 import { Header } from './Header';
 import { ListSummary } from './ListSummary';
+import { MyVideos } from './MyVideos';
 import { OfflineSaveButton } from './OfflineSaveButton';
-import { ShoppingList } from './ShoppingList';
+import { ShoppingList, videoGroupId } from './ShoppingList';
 import { UrlInputForm } from './UrlInputForm';
 
-// 앱을 열 때 백그라운드 앙상블 개선분을 받아올 미확정 영상 수 (서버 레이트 리밋 고려)
-const MAX_SILENT_REFRESH = 3;
+// 앱을 열 때 백그라운드 앙상블 개선분을 받아올 미확정 영상 수 (GET /api/videos 한 번에 조회, 서버 상한 30)
+const MAX_SILENT_REFRESH = 30;
 const MAX_RELATED_PREFETCH = 10;
+
+function scrollToTop(el: HTMLElement | null) {
+  requestAnimationFrame(() => el?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
 
 export function HomeClient() {
   const params = useSearchParams();
@@ -41,6 +46,9 @@ export function HomeClient() {
     addVideo,
     refreshVideo,
     removeVideo,
+    upsertJob,
+    completeJob,
+    removeJob,
     toggleChecked,
     resetChecks,
     clearAll,
@@ -49,13 +57,14 @@ export function HomeClient() {
   } = useShoppingList();
 
   const [tab, setTab] = useState<FilterTab>('all');
-  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
-  const [phase, setPhase] = useState<AnalysisPhase>('analyzing');
+  // 링크 접수 중 (서버 깨우기 + 작업 접수까지만) — 분석 자체는 서버 백그라운드 작업
+  const [submitting, setSubmitting] = useState<'connecting' | 'sending' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [related, setRelated] = useState<Record<string, RelatedVideo[]>>({});
-  const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
   const listTopRef = useRef<HTMLDivElement>(null);
+  const myVideosRef = useRef<HTMLDivElement>(null);
 
   const entries = useMemo(() => toEntries(list.videos, list.checked), [list.videos, list.checked]);
   const imageUrls = useMemo(() => entries.map((e) => e.item.image_url).filter(Boolean), [entries]);
@@ -76,78 +85,125 @@ export function HomeClient() {
     }
   }, []);
 
-  /** 분석 성공 시 true (입력창은 성공했을 때만 비움) */
+  /** 리스트에 있는 영상들의 최신 결과를 조용히 반영 (회차를 올리지 않는 조회, 레이트 리밋 없음) */
+  const refreshVideos = useCallback(
+    async (videos: VideoAnalysisResponse[]) => {
+      const ids = videos
+        .filter((v) => !v.is_locked)
+        .map((v) => v.video_id)
+        .slice(0, MAX_SILENT_REFRESH);
+      if (ids.length === 0) return;
+      try {
+        const res = await lookupVideos(ids);
+        res.videos.forEach(refreshVideo);
+      } catch {
+        /* 조용한 갱신 실패는 무시 */
+      }
+    },
+    [refreshVideo],
+  );
+
+  /** 링크 접수 성공 시 true (입력창은 성공했을 때만 비움). 분석은 서버 백그라운드 작업으로 진행된다. */
   const analyze = useCallback(
     async (url: string): Promise<boolean> => {
       if (!navigator.onLine) {
         setError('오프라인 상태에서는 새 영상을 분석할 수 없어요.');
         return false;
       }
-      if (abortRef.current) return false; // 분석 중 중복 요청 차단
+      // 접수 중 연타만 막는다 (접수가 끝나면 다른 링크를 바로 이어서 넣을 수 있음)
+      if (submittingRef.current) return false;
 
-      // 이미 내 리스트에 있는 영상이면 서버 호출 없이 바로 보여주고, 미확정이면 뒤에서 조용히 갱신
       const key = canonicalVideoKey(url);
+      // 이미 내 리스트에 있는 영상이면 서버 호출 없이 바로 보여주고, 미확정이면 뒤에서 조용히 갱신
       const existing = key ? list.videos.find((v) => canonicalVideoKey(v.source_url) === key) : undefined;
       if (existing) {
         addVideo(existing);
         setError(null);
         setNotice('이미 리스트에 있는 영상이에요');
-        requestAnimationFrame(() => listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-        if (!existing.is_locked && existing.source_url) {
-          analyzeVideo(existing.source_url).then(refreshVideo, () => undefined);
-        }
+        scrollToTop(listTopRef.current);
+        void refreshVideos([existing]);
+        return true;
+      }
+      const running = key
+        ? list.jobs.find((j) => isActiveJob(j) && canonicalVideoKey(j.source_url) === key)
+        : undefined;
+      if (running) {
+        setError(null);
+        setNotice('이미 분석 중인 영상이에요');
+        scrollToTop(myVideosRef.current);
         return true;
       }
 
-      const controller = new AbortController();
-      abortRef.current = controller;
+      submittingRef.current = true;
       setError(null);
       setNotice(null);
-      setPhase('analyzing');
-      setPendingUrl(url);
-      const { signal } = controller;
+      setSubmitting('sending');
       try {
-        // 슬립 중인 무료 서버면 깨어날 때까지 '서버 깨우는 중' 단계로 대기
-        await waitForServer({ signal, onWaking: () => setPhase('connecting') });
-        setPhase('analyzing');
-        let result;
+        // 슬립 중인 무료 서버면 깨어날 때까지 대기
+        await waitForServer({ onWaking: () => setSubmitting('connecting') });
+        setSubmitting('sending');
+        let res;
         try {
-          result = await analyzeVideo(url, signal);
+          res = await analyzeVideo(url);
         } catch (err) {
-          // 분석 도중 연결이 끊기면(서버 재시작 등) 한 번만 서버를 기다렸다가 재시도
+          // 접수 도중 연결이 끊기면(서버 재시작 등) 한 번만 서버를 기다렸다가 재시도 — 같은 링크는 서버가 작업 1개로 합친다
           if (!(err instanceof ApiError && err.status === 0)) throw err;
-          await waitForServer({ signal, onWaking: () => setPhase('connecting') });
-          setPhase('analyzing');
-          result = await analyzeVideo(url, signal);
+          await waitForServer({ onWaking: () => setSubmitting('connecting') });
+          setSubmitting('sending');
+          res = await analyzeVideo(url);
         }
-        addVideo(result);
-        setNotice(`${result.items.length}개 상품을 리스트에 담았어요`);
-        void loadRelated(result.video_id);
-        requestAnimationFrame(() => listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        if (res.video) {
+          // 다른 사람이 이미 분석한 영상 → 바로 리스트에
+          addVideo(res.video);
+          setNotice(`${res.video.items.length}개 상품을 리스트에 담았어요`);
+          void loadRelated(res.video.video_id);
+          scrollToTop(listTopRef.current);
+        } else if (res.job) {
+          // 같은 링크의 이전 실패 기록은 새 작업으로 대체
+          list.jobs
+            .filter((j) => !isActiveJob(j) && canonicalVideoKey(j.source_url) === key)
+            .forEach((j) => removeJob(j.job_id));
+          upsertJob(res.job);
+          setNotice('분석을 시작했어요. 다른 일을 하셔도 돼요');
+          scrollToTop(myVideosRef.current);
+        }
         return true;
       } catch (err) {
-        if (err instanceof ApiError && err.status === 499) return false;
-        setError(err instanceof Error ? err.message : '분석에 실패했어요.');
+        setError(err instanceof Error ? err.message : '분석을 시작하지 못했어요.');
         return false;
       } finally {
-        if (abortRef.current === controller) {
-          abortRef.current = null;
-          setPendingUrl(null);
-        }
+        submittingRef.current = false;
+        setSubmitting(null);
       }
     },
-    [addVideo, refreshVideo, loadRelated, list.videos],
+    [addVideo, upsertJob, removeJob, loadRelated, refreshVideos, list.videos, list.jobs],
   );
 
-  // 분석 중 리스트는 키보드 포커스까지 차단 (pointer-events 만으로는 Tab 이동이 가능)
-  useEffect(() => {
-    if (listTopRef.current) listTopRef.current.inert = pendingUrl !== null;
-  }, [pendingUrl]);
+  // 진행 중 작업 조회: 완료되면 리스트에 넣고, 실패하면 사유와 '다시 시도'를 보여준다
+  useJobPolling(list.jobs, hydrated && online, {
+    onProgress: upsertJob,
+    onDone: (job, video) => {
+      completeJob(job.job_id, video);
+      setNotice(`분석 완료! ${video.items.length}개 상품을 리스트에 담았어요`);
+      void loadRelated(video.video_id);
+    },
+    onFailed: upsertJob,
+  });
 
-  const cancelAnalysis = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setPendingUrl(null);
+  const retryJob = useCallback(
+    (job: AnalysisJob) => {
+      removeJob(job.job_id);
+      void analyze(job.source_url);
+    },
+    [analyze, removeJob],
+  );
+
+  const showVideo = useCallback((videoId: string) => {
+    setTab('video');
+    // 탭 전환 렌더 후 해당 영상 묶음으로 이동
+    setTimeout(() => {
+      document.getElementById(videoGroupId(videoId))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
   }, []);
 
   // Web Share Target(/share → /?url=) 또는 외부 링크로 들어온 URL 자동 분석
@@ -163,25 +219,14 @@ export function HomeClient() {
     else setError('공유된 내용에서 영상 링크를 찾지 못했어요. 링크를 직접 붙여넣어 주세요.');
   }, [hydrated, params, router, analyze]);
 
-  // 앱을 열면: 관련 영상 로드 + 아직 동결되지 않은 영상의 개선된 결과를 조용히 갱신
+  // 앱을 열면: 관련 영상 로드 + 아직 동결되지 않은 영상의 개선된 결과를 조용히 갱신 (요청 1번)
   const refreshedRef = useRef(false);
   useEffect(() => {
     if (!hydrated || refreshedRef.current || !navigator.onLine) return;
     refreshedRef.current = true;
-    const videos = list.videos;
-    videos.slice(0, MAX_RELATED_PREFETCH).forEach((v) => void loadRelated(v.video_id));
-    const targets = videos.filter((v) => !v.is_locked && v.source_url).slice(0, MAX_SILENT_REFRESH);
-    (async () => {
-      for (const video of targets) {
-        try {
-          // 같은 사용자의 재요청은 서버에서 회차를 올리지 않으므로 캐시 조회와 같음
-          refreshVideo(await analyzeVideo(video.source_url!));
-        } catch {
-          /* 조용한 갱신 실패는 무시 */
-        }
-      }
-    })();
-  }, [hydrated, list.videos, loadRelated, refreshVideo]);
+    list.videos.slice(0, MAX_RELATED_PREFETCH).forEach((v) => void loadRelated(v.video_id));
+    void refreshVideos(list.videos);
+  }, [hydrated, list.videos, loadRelated, refreshVideos]);
 
   const handleFeedback = useCallback(
     async (itemId: string, type: FeedbackType | null) => {
@@ -203,6 +248,7 @@ export function HomeClient() {
   );
 
   const hasItems = list.videos.length > 0;
+  const hasJobs = list.jobs.length > 0;
 
   return (
     <>
@@ -218,7 +264,12 @@ export function HomeClient() {
             </h1>
             <p className="mt-1.5 text-sm text-slate-500">SNS 장보기·살림템 영상 속 상품을 AI가 체크리스트로 만들어요.</p>
           </div>
-          <UrlInputForm loading={pendingUrl !== null} disabled={!online} onSubmit={analyze} />
+          <UrlInputForm loading={submitting !== null} disabled={!online} onSubmit={analyze} />
+          {submitting === 'connecting' && (
+            <p role="status" className="px-1 text-xs text-slate-500">
+              서버에 연결하고 있어요. 최대 1분 정도 걸릴 수 있어요.
+            </p>
+          )}
         </section>
 
         {!online && (
@@ -228,6 +279,7 @@ export function HomeClient() {
               오프라인 모드예요. {offlineSavedAt ? '저장해 둔 리스트로 장을 볼 수 있어요.' : '저장된 리스트만 볼 수 있어요.'}
               <br />
               체크한 내용은 이 기기에 저장돼요.
+              {list.jobs.some(isActiveJob) && ' 분석 중인 영상은 다시 연결되면 결과를 받아와요.'}
             </p>
           </div>
         )}
@@ -242,19 +294,24 @@ export function HomeClient() {
           </div>
         )}
 
-        {pendingUrl && <AnalysisLoading url={pendingUrl} phase={phase} onCancel={cancelAnalysis} />}
+        <div ref={myVideosRef} className="scroll-mt-20">
+          <MyVideos
+            jobs={list.jobs}
+            videos={list.videos}
+            addedAt={list.addedAt}
+            checked={list.checked}
+            online={online}
+            onRetry={retryJob}
+            onDismissJob={removeJob}
+            onShowVideo={showVideo}
+            onRemoveVideo={removeVideo}
+          />
+        </div>
 
-        {hydrated && !hasItems && !pendingUrl && <EmptyState />}
+        {hydrated && !hasItems && !hasJobs && <EmptyState />}
 
         {hasItems && (
-          <div
-            ref={listTopRef}
-            aria-busy={pendingUrl !== null}
-            className={`scroll-mt-20 space-y-4 transition-opacity ${
-              // 분석 중에는 리스트 조작 잠금 (체크/피드백/관련 영상/내보내기)
-              pendingUrl ? 'pointer-events-none select-none opacity-40' : ''
-            }`}
-          >
+          <div ref={listTopRef} className="scroll-mt-20 space-y-4">
             <ListSummary
               done={stats.done}
               total={stats.total}

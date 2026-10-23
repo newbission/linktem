@@ -396,5 +396,98 @@ async def mark_logs_processed(conn: asyncpg.Connection, log_ids: Sequence[int]) 
         )
 
 
+# ---------------------------------------------------------------------------
+# analysis_jobs (백그라운드 1회차 분석)
+# ---------------------------------------------------------------------------
+
+_JOB_COLUMNS = """
+    id, platform, canonical_key, source_url, client_hash, status, stage, error, error_code, video_id,
+    created_at, updated_at, finished_at
+"""
+
+
+async def create_job(
+    conn: asyncpg.Connection, *, platform: str, canonical_key: str, source_url: str, client_hash: str
+) -> asyncpg.Record | None:
+    """같은 영상의 진행 중 작업이 이미 있으면 None (uq_analysis_jobs_active)."""
+    return await conn.fetchrow(
+        f"""
+        insert into analysis_jobs (platform, canonical_key, source_url, client_hash)
+        values ($1, $2, $3, $4)
+        on conflict (canonical_key) where status in ('queued', 'running') do nothing
+        returning {_JOB_COLUMNS}
+        """,
+        platform,
+        canonical_key,
+        source_url,
+        client_hash,
+    )
+
+
+async def get_job(conn: asyncpg.Connection, job_id: UUID | str) -> asyncpg.Record | None:
+    return await conn.fetchrow(f"select {_JOB_COLUMNS} from analysis_jobs where id = $1", _uuid(job_id))
+
+
+async def get_active_job_by_key(conn: asyncpg.Connection, canonical_key: str) -> asyncpg.Record | None:
+    return await conn.fetchrow(
+        f"select {_JOB_COLUMNS} from analysis_jobs where canonical_key = $1 and status in ('queued', 'running')",
+        canonical_key,
+    )
+
+
+async def set_job_stage(conn: asyncpg.Connection, job_id: UUID, stage: str) -> None:
+    await conn.execute(
+        "update analysis_jobs set status = 'running', stage = $2 where id = $1 and status in ('queued', 'running')",
+        job_id,
+        stage,
+    )
+
+
+async def finish_job(conn: asyncpg.Connection, job_id: UUID, video_id: UUID) -> None:
+    await conn.execute(
+        """
+        update analysis_jobs
+           set status = 'done', stage = 'done', video_id = $2, error = null, error_code = null, finished_at = now()
+         where id = $1
+        """,
+        job_id,
+        video_id,
+    )
+
+
+async def fail_job(conn: asyncpg.Connection, job_id: UUID, error: str, error_code: int) -> None:
+    await conn.execute(
+        """
+        update analysis_jobs
+           set status = 'failed', stage = 'failed', error = $2, error_code = $3, finished_at = now()
+         where id = $1 and status in ('queued', 'running')
+        """,
+        job_id,
+        error,
+        error_code,
+    )
+
+
+async def fail_unfinished_jobs(conn: asyncpg.Connection, error: str, error_code: int) -> int:
+    """서버 시작 시: 이전 프로세스에서 끝나지 못한 작업을 실패로 정리 (작업은 프로세스 메모리에서 실행됨)."""
+    result = await conn.execute(
+        """
+        update analysis_jobs
+           set status = 'failed', stage = 'failed', error = $1, error_code = $2, finished_at = now()
+         where status in ('queued', 'running')
+        """,
+        error,
+        error_code,
+    )
+    return int(result.split()[-1])
+
+
+async def delete_finished_jobs(conn: asyncpg.Connection, older_than_days: int) -> int:
+    result = await conn.execute(
+        "delete from analysis_jobs where finished_at < now() - make_interval(days => $1)", older_than_days
+    )
+    return int(result.split()[-1])
+
+
 def _uuid(value: UUID | str) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.8-flash"
     gemini_temperature: float = 0.2
     gemini_timeout_sec: int = 180
+    # 추론(thinking) 단계 — 상품명/시점 추출은 깊은 추론이 필요 없어 낮출수록 빠르다. 빈 값이면 모델 기본값
+    gemini_thinking_level: Literal["", "minimal", "low", "medium", "high"] = "low"
+    # 영상 프레임 해상도 — low 는 프레임당 토큰이 약 1/4 (포장 글씨 정도는 식별 가능)
+    gemini_media_resolution: Literal["low", "medium", "high"] = "low"
     # 유튜브는 Gemini 가 URL 을 직접 읽게 하고 다운로드는 캡처용으로 병렬 진행
     gemini_use_youtube_url: bool = True
 

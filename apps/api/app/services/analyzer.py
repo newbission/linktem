@@ -1,14 +1,16 @@
 """5회 점진적 앙상블 & 캐시 오케스트레이션.
 
-| 회차 | 동작                                                                          |
-| ---- | ----------------------------------------------------------------------------- |
-| 1    | 다운로드 → Gemini → 캡처 → R2 → DB 저장 → 즉시 응답                            |
-| 2~4  | 캐시 즉시 응답 + BackgroundTask: 추가 Gemini 회차 → 전 회차 다수결 → 아이템 동기화 |
-| 5    | 캐시 응답 + is_locked=true. BackgroundTask: 최종 다수결 확정 (Gemini 호출 없음)     |
-| 6+   | 캐시만 응답                                                                    |
+| 회차 | 동작                                                                                   |
+| ---- | -------------------------------------------------------------------------------------- |
+| 1    | 작업(analysis_jobs) 생성 후 즉시 응답 → 백그라운드: 다운로드 → Gemini → 캡처 → 저장       |
+| 2~4  | 캐시 즉시 응답 + BackgroundTask: 추가 Gemini 회차 → 전 회차 다수결 → 아이템 동기화          |
+| 5    | 캐시 응답 + is_locked=true. BackgroundTask: 최종 다수결 확정 (Gemini 호출 없음)              |
+| 6+   | 캐시만 응답                                                                             |
 
+- 1회차는 HTTP 요청과 분리된 작업으로 실행하고 진행 단계를 DB 에 기록한다 → 클라이언트는 짧은 조회로
+  진행 상황을 확인하므로 긴 요청이 끊겨 결과를 잃지 않고, 앱을 닫았다 열어도 이어서 받는다.
 - 회차는 처음 보는 요청자(익명 해시)일 때만 증가한다 → 한 사람이 연타해 조기 동결되는 것 방지.
-- 동일 URL 최초 분석이 동시에 들어오면 하나의 작업을 공유한다 (in-flight dedupe).
+- 동일 URL 최초 분석이 동시에 들어오면 하나의 작업을 공유한다 (진행 중 작업은 영상당 1개, DB 유니크 인덱스).
 - 같은 영상의 백그라운드 작업은 영상별 asyncio.Lock 으로 직렬화한다 (Render 단일 인스턴스 전제, ADR-005).
 - 아이템 ID 는 회차가 바뀌어도 유지된다 (클라이언트 체크 상태 보존): 같은 상품으로 매칭되면 UPDATE.
 """
@@ -21,7 +23,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from uuid import UUID
 
 import asyncpg
@@ -31,6 +33,8 @@ from fastapi import BackgroundTasks
 from app import repositories as repo
 from app.config import Settings
 from app.schemas import (
+    AnalysisJob,
+    AnalyzeResponse,
     RelatedVideo,
     RelatedVideosResponse,
     ShoppingItem,
@@ -55,6 +59,17 @@ logger = logging.getLogger(__name__)
 
 # 타임스탬프가 이 이상 바뀌면 스틸컷을 다시 캡처
 RECAPTURE_THRESHOLD_SEC = 3.0
+# 리스트 갱신 조회(GET /api/videos)에서 한 번에 받을 수 있는 영상 수
+MAX_LOOKUP_IDS = 30
+
+JOB_INTERRUPTED_MESSAGE = "서버가 다시 시작되어 분석이 중단됐어요. 다시 시도해 주세요."
+JOB_UNEXPECTED_MESSAGE = "분석 중 알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해 주세요."
+
+StageCallback = Callable[[str], Awaitable[None]]
+
+
+async def _no_stage(_: str) -> None:
+    return None
 
 
 class AnalysisError(Exception):
@@ -89,7 +104,8 @@ class Analyzer:
         self._images = images
         self._storage = storage
         self._video_locks: dict[str, asyncio.Lock] = {}
-        self._inflight: dict[str, asyncio.Task[VideoAnalysisResponse]] = {}
+        # 실행 중인 1회차 작업 (GC 로 사라지지 않도록 참조 보관, 종료 시 정리)
+        self._job_tasks: set[asyncio.Task[None]] = set()
         # Render 무료 인스턴스(512MB) 보호: 다운로드+AI+ffmpeg 무거운 작업 동시 실행 수 제한
         self._heavy = asyncio.Semaphore(2)
 
@@ -97,7 +113,7 @@ class Analyzer:
     # POST /api/analyze
     # ==================================================================
 
-    async def analyze(self, raw_url: str, client_hash: str, background: BackgroundTasks) -> VideoAnalysisResponse:
+    async def analyze(self, raw_url: str, client_hash: str, background: BackgroundTasks) -> AnalyzeResponse:
         pool = self._require_pool()
         try:
             target = normalize_video_url(raw_url)
@@ -109,8 +125,8 @@ class Analyzer:
         async with pool.acquire() as conn:
             video = await repo.get_video_by_key(conn, target.canonical_key)
         if video is None:
-            return await self._first_analysis_dedup(target, client_hash)
-        return await self._serve_cached(video["id"], client_hash, background)
+            return AnalyzeResponse(job=await self._start_job(target, client_hash))
+        return AnalyzeResponse(video=await self._serve_cached(video["id"], client_hash, background))
 
     async def _serve_cached(self, video_id: UUID, client_hash: str, background: BackgroundTasks) -> VideoAnalysisResponse:
         pool = self._require_pool()
@@ -129,34 +145,139 @@ class Analyzer:
             background.add_task(self.restore_images, video_id)
         return await self.build_response(video_id)
 
-    async def _first_analysis_dedup(self, target: VideoTarget, client_hash: str) -> VideoAnalysisResponse:
-        key = target.canonical_key
-        task = self._inflight.get(key)
-        if task is None:
-            task = asyncio.create_task(self._first_analysis(target, client_hash))
-            self._inflight[key] = task
-            task.add_done_callback(lambda _t: self._inflight.pop(key, None))
-        # shield: 첫 요청자가 연결을 끊어도 작업은 계속되어 다른 대기자/캐시에 결과가 남음
-        return await asyncio.shield(task)
+    # ==================================================================
+    # 1회차 분석 작업 (POST /api/analyze → GET /api/jobs/{id})
+    # ==================================================================
 
-    async def _first_analysis(self, target: VideoTarget, client_hash: str) -> VideoAnalysisResponse:
-        pool = self._require_pool()
+    async def _start_job(self, target: VideoTarget, client_hash: str) -> AnalysisJob:
         if not self._gemini.enabled:
             raise AnalysisError(503, "AI 분석 기능이 설정되지 않았습니다.")
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            job = await repo.create_job(
+                conn,
+                platform=target.platform,
+                canonical_key=target.canonical_key,
+                source_url=target.url,
+                client_hash=client_hash,
+            )
+            if job is None:
+                # 같은 영상을 다른 사람이 이미 분석 중 → 그 작업을 함께 기다린다
+                job = await repo.get_active_job_by_key(conn, target.canonical_key)
+                if job is not None:
+                    return _job_model(job)
+                # 조회 사이에 작업이 끝난 드문 경우: 새 작업을 만든다 (실행 시 캐시를 먼저 확인)
+                job = await repo.create_job(
+                    conn,
+                    platform=target.platform,
+                    canonical_key=target.canonical_key,
+                    source_url=target.url,
+                    client_hash=client_hash,
+                )
+                if job is None:
+                    raise AnalysisError(409, "같은 영상의 분석이 이미 진행 중이에요. 잠시 후 다시 확인해 주세요.")
 
+        task = asyncio.create_task(self._run_job(job["id"], target, client_hash), name=f"analysis-job-{job['id']}")
+        self._job_tasks.add(task)
+        task.add_done_callback(self._job_tasks.discard)
+        logger.info("job %s queued for %s", job["id"], target.canonical_key)
+        return _job_model(job)
+
+    async def get_job(self, job_id: str) -> AnalyzeResponse:
+        pool = self._require_pool()
+        parsed = _parse_uuid(job_id)
+        async with pool.acquire() as conn:
+            job = await repo.get_job(conn, parsed)
+        if job is None:
+            raise AnalysisError(404, "분석 작업을 찾을 수 없어요. 링크를 다시 넣어 주세요.")
+        video = await self.build_response(job["video_id"]) if job["status"] == "done" and job["video_id"] else None
+        return AnalyzeResponse(job=_job_model(job), video=video)
+
+    async def drain_jobs(self) -> None:
+        """진행 중인 1회차 작업이 모두 끝날 때까지 대기 (테스트 / 정상 종료용)."""
+        while self._job_tasks:
+            await asyncio.gather(*list(self._job_tasks), return_exceptions=True)
+
+    async def cancel_jobs(self) -> None:
+        """서버 종료 시: 실행 중인 작업을 취소하고 실패로 기록되기를 기다린다."""
+        for task in list(self._job_tasks):
+            task.cancel()
+        await asyncio.gather(*list(self._job_tasks), return_exceptions=True)
+
+    async def fail_interrupted_jobs(self) -> int:
+        """서버 시작 시: 이전 프로세스에서 끝나지 못한 작업 정리 (작업은 프로세스 메모리에서 실행되므로 이어갈 수 없음)."""
+        if self._pool is None:
+            return 0
+        try:
+            async with self._pool.acquire() as conn:
+                count = await repo.fail_unfinished_jobs(conn, JOB_INTERRUPTED_MESSAGE, 503)
+        except asyncpg.UndefinedTableError:
+            # 서버는 띄우되(캐시 조회는 가능) 새 영상 분석은 마이그레이션 전까지 실패한다
+            logger.error("analysis_jobs 테이블이 없습니다 — migrations/003_analysis_jobs.sql 을 실행하세요.")
+            return 0
+        if count:
+            logger.warning("marked %d interrupted analysis job(s) as failed", count)
+        return count
+
+    async def _run_job(self, job_id: UUID, target: VideoTarget, client_hash: str) -> None:
+        pool = self._require_pool()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        async def on_stage(stage: str) -> None:
+            # 단계 전환 시각을 남겨 어디서 오래 걸리는지 로그로 바로 확인
+            logger.info("job %s → %s (+%.1fs)", job_id, stage, loop.time() - started)
+            try:
+                async with pool.acquire() as conn:
+                    await repo.set_job_stage(conn, job_id, stage)
+            except Exception:  # noqa: BLE001 — 단계 표시는 부가 정보, 분석은 계속
+                logger.warning("job %s stage update failed (%s)", job_id, stage, exc_info=True)
+
+        async def fail(detail: str, code: int) -> None:
+            async with pool.acquire() as conn:
+                await repo.fail_job(conn, job_id, detail, code)
+
+        try:
+            async with pool.acquire() as conn:
+                existing = await repo.get_video_by_key(conn, target.canonical_key)
+            video_id = existing["id"] if existing else await self._first_analysis(target, client_hash, on_stage)
+            async with pool.acquire() as conn:
+                await repo.finish_job(conn, job_id, video_id)
+            logger.info("job %s done in %.1fs (video %s)", job_id, loop.time() - started, video_id)
+        except AnalysisError as exc:
+            logger.info("job %s failed (%d): %s", job_id, exc.status_code, exc.detail)
+            await fail(exc.detail, exc.status_code)
+        except asyncio.CancelledError:
+            # 종료 중 취소: 다음 시작 시 fail_interrupted_jobs 가 정리하지만, 가능하면 지금 기록
+            try:
+                await asyncio.shield(fail(JOB_INTERRUPTED_MESSAGE, 503))
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        except Exception:  # noqa: BLE001 — 작업 실패는 상태로만 전달
+            logger.exception("job %s crashed", job_id)
+            await fail(JOB_UNEXPECTED_MESSAGE, 500)
+
+    async def _first_analysis(
+        self, target: VideoTarget, client_hash: str, on_stage: StageCallback = _no_stage
+    ) -> UUID:
+        """1회차: 다운로드 → Gemini → 캡처 → 저장. 저장된(또는 동시에 먼저 저장된) 영상 ID 반환."""
+        pool = self._require_pool()
         video_id = uuid.uuid4()
         async with self._heavy:
             with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
                 workdir = Path(tmp)
-                downloaded, raw_items = await self._download_and_extract(target, workdir, run_index=1)
+                downloaded, raw_items = await self._download_and_extract(target, workdir, 1, on_stage)
                 if not raw_items:
                     raise AnalysisError(422, "영상에서 장보기 상품을 찾지 못했어요.")
 
+                await on_stage("capturing")
                 consensus = build_consensus(parse_runs([raw_items]))
                 uploads = await self._capture_and_upload(
                     video_id, downloaded, [c.timestamp_sec for c in consensus], workdir
                 )
 
+        await on_stage("saving")
         uploaded_keys = [u.key for u in uploads if u]
         try:
             async with pool.acquire() as conn, conn.transaction():
@@ -180,14 +301,32 @@ class Analyzer:
             raise
 
         if video is None:
-            # 다른 인스턴스/요청이 먼저 저장함 → 업로드한 이미지는 버리고 캐시 경로로
+            # 다른 인스턴스/요청이 먼저 저장함 → 업로드한 이미지는 버리고 기존 영상으로
             await self._storage.delete_keys(uploaded_keys)
             async with pool.acquire() as conn:
                 existing = await repo.get_video_by_key(conn, target.canonical_key)
             assert existing is not None
-            return await self.build_response(existing["id"])
+            return existing["id"]
+        return video_id
 
-        return await self.build_response(video_id)
+    # ==================================================================
+    # 리스트 갱신 조회 (GET /api/videos) — 회차를 올리지 않음
+    # ==================================================================
+
+    async def lookup_videos(self, video_ids: list[str]) -> list[VideoAnalysisResponse]:
+        pool = self._require_pool()
+        ids: list[UUID] = []
+        for raw in dict.fromkeys(video_ids):
+            try:
+                ids.append(UUID(raw))
+            except ValueError:
+                continue
+        if len(ids) > MAX_LOOKUP_IDS:
+            raise AnalysisError(400, f"한 번에 최대 {MAX_LOOKUP_IDS}개 영상까지 조회할 수 있어요.")
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("select id from videos where id = any($1::uuid[])", ids)
+        existing = {r["id"] for r in rows}
+        return [await self.build_response(vid) for vid in ids if vid in existing]
 
     # ==================================================================
     # 백그라운드 회차 (2~4) / 동결 (5) / 이미지 복원
@@ -426,9 +565,10 @@ class Analyzer:
     # ==================================================================
 
     async def _download_and_extract(
-        self, target: VideoTarget, workdir: Path, run_index: int
+        self, target: VideoTarget, workdir: Path, run_index: int, on_stage: StageCallback = _no_stage
     ) -> tuple[DownloadedVideo, list[dict[str, Any]]]:
         try:
+            await on_stage("downloading")
             if target.platform == "youtube" and self._settings.gemini_use_youtube_url:
                 gemini_task = asyncio.create_task(self._gemini.analyze_youtube_url(target.url, run_index))
                 # 다운로드가 먼저 실패해 결과를 기다리지 않게 되어도 "exception never retrieved" 경고가 없도록
@@ -438,6 +578,7 @@ class Analyzer:
                 except BaseException:
                     gemini_task.cancel()
                     raise
+                await on_stage("analyzing")
                 try:
                     raw_items = await gemini_task
                 except GeminiError as exc:
@@ -445,6 +586,7 @@ class Analyzer:
                     raw_items = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
             else:
                 downloaded = await self._downloader.download(target.url, workdir)
+                await on_stage("analyzing")
                 raw_items = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
         except VideoTooLongError as exc:
             raise AnalysisError(413, f"{exc.limit // 60}분 이하의 영상만 분석할 수 있어요.") from exc
@@ -569,6 +711,20 @@ class Analyzer:
         if lock is None:
             lock = self._video_locks[key] = asyncio.Lock()
         return lock
+
+
+def _job_model(row: asyncpg.Record) -> AnalysisJob:
+    return AnalysisJob(
+        job_id=str(row["id"]),
+        source_url=row["source_url"],
+        status=row["status"],
+        stage=row["stage"],
+        error=row["error"],
+        error_code=row["error_code"],
+        video_id=str(row["video_id"]) if row["video_id"] else None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
 
 
 def _parse_uuid(value: str) -> UUID:

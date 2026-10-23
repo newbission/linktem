@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { FeedbackType, VideoAnalysisResponse } from '@linktem/types';
+import type { AnalysisJob, FeedbackType, VideoAnalysisResponse } from '@linktem/types';
 
-import { EMPTY_LIST, loadList, saveList, type StoredList } from './list-store';
+import { EMPTY_LIST, loadList, normalizeList, saveList, type StoredList } from './list-store';
 import { loadImageObjectUrls, loadSnapshot, offlineSignature, updateSnapshotChecks } from './offline-db';
 
 /** 장보기 리스트 상태 (localStorage 영속) + 오프라인 스냅샷 동기화 */
@@ -20,11 +20,11 @@ export function useShoppingList() {
       const local = loadList();
       const snapshot = await loadSnapshot();
       if (cancelled) return;
-      if (local && local.videos.length > 0) {
+      if (local && (local.videos.length > 0 || local.jobs.length > 0)) {
         setList(local);
       } else if (snapshot) {
         // localStorage 가 비워졌어도 오프라인 저장본이 있으면 복구
-        setList(snapshot.list);
+        setList(normalizeList(snapshot.list));
       }
       setOfflineSavedAt(snapshot?.savedAt ?? null);
       setSavedSignature(snapshot ? offlineSignature(snapshot.list) : null);
@@ -58,7 +58,41 @@ export function useShoppingList() {
   /** 새 분석 결과를 맨 앞에 추가 (이미 있는 영상이면 최신 결과로 교체 후 맨 앞으로) */
   const addVideo = useCallback(
     (video: VideoAnalysisResponse) =>
-      mutate((prev) => ({ ...prev, videos: [video, ...prev.videos.filter((v) => v.video_id !== video.video_id)] })),
+      mutate((prev) => ({
+        ...prev,
+        videos: [video, ...prev.videos.filter((v) => v.video_id !== video.video_id)],
+        addedAt: { ...prev.addedAt, [video.video_id]: prev.addedAt[video.video_id] ?? Date.now() },
+      })),
+    [mutate],
+  );
+
+  /** 분석 작업 추가/갱신 (같은 job_id 면 제자리 갱신, 새 작업은 맨 앞) */
+  const upsertJob = useCallback(
+    (job: AnalysisJob) =>
+      mutate((prev) => {
+        const exists = prev.jobs.some((j) => j.job_id === job.job_id);
+        return {
+          ...prev,
+          jobs: exists ? prev.jobs.map((j) => (j.job_id === job.job_id ? job : j)) : [job, ...prev.jobs],
+        };
+      }),
+    [mutate],
+  );
+
+  /** 완료된 작업은 결과 영상을 리스트에 넣고 작업 목록에서 뺀다 (한 번의 상태 변경으로) */
+  const completeJob = useCallback(
+    (jobId: string, video: VideoAnalysisResponse) =>
+      mutate((prev) => ({
+        ...prev,
+        jobs: prev.jobs.filter((j) => j.job_id !== jobId),
+        videos: [video, ...prev.videos.filter((v) => v.video_id !== video.video_id)],
+        addedAt: { ...prev.addedAt, [video.video_id]: prev.addedAt[video.video_id] ?? Date.now() },
+      })),
+    [mutate],
+  );
+
+  const removeJob = useCallback(
+    (jobId: string) => mutate((prev) => ({ ...prev, jobs: prev.jobs.filter((j) => j.job_id !== jobId) })),
     [mutate],
   );
 
@@ -78,7 +112,9 @@ export function useShoppingList() {
         const target = prev.videos.find((v) => v.video_id === videoId);
         const checked = { ...prev.checked };
         target?.items.forEach((i) => delete checked[i.id]);
-        return { ...prev, checked, videos: prev.videos.filter((v) => v.video_id !== videoId) };
+        const addedAt = { ...prev.addedAt };
+        delete addedAt[videoId];
+        return { ...prev, checked, addedAt, videos: prev.videos.filter((v) => v.video_id !== videoId) };
       }),
     [mutate],
   );
@@ -135,6 +171,9 @@ export function useShoppingList() {
     addVideo,
     refreshVideo,
     removeVideo,
+    upsertJob,
+    completeJob,
+    removeJob,
     toggleChecked,
     resetChecks,
     clearAll,

@@ -37,8 +37,13 @@ def test_auto_backend_selection(tmp_path: Path) -> None:
     assert isinstance(create_storage(forced), LocalStorage)
 
 
-async def test_media_served_by_api() -> None:
+async def test_media_served_by_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import get_settings
     from app.main import app
+
+    # 앱 시작 시 DB 에 연결하지 않도록 (로컬 앱 DB 의 진행 중 작업을 건드리지 않게)
+    monkeypatch.setenv("DATABASE_URL", "")
+    get_settings.cache_clear()
 
     storage = app.state.storage
     assert isinstance(storage, LocalStorage)
@@ -54,3 +59,4 @@ async def test_media_served_by_api() -> None:
             assert client.get("/media/captures/none.webp").status_code == 404
     finally:
         await storage.delete_keys([key])
+        get_settings.cache_clear()

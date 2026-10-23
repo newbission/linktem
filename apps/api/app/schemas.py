@@ -61,6 +61,35 @@ class VideoAnalysisResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 백그라운드 분석 작업
+# ---------------------------------------------------------------------------
+
+AnalysisJobStatus = Literal["queued", "running", "done", "failed"]
+AnalysisJobStage = Literal["queued", "downloading", "analyzing", "capturing", "saving", "done", "failed"]
+
+
+class AnalysisJob(BaseModel):
+    job_id: str
+    source_url: str
+    status: AnalysisJobStatus
+    stage: AnalysisJobStage
+    error: Optional[str] = None
+    error_code: Optional[int] = None
+    video_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class AnalyzeResponse(BaseModel):
+    job: Optional[AnalysisJob] = None
+    video: Optional[VideoAnalysisResponse] = None
+
+
+class VideoLookupResponse(BaseModel):
+    videos: list[VideoAnalysisResponse]
+
+
+# ---------------------------------------------------------------------------
 # 피드백
 # ---------------------------------------------------------------------------
 
@@ -108,3 +137,4 @@ class CleanupResponse(BaseModel):
     superseded_deleted: int
     expired_videos: int
     expired_images: int
+    jobs_deleted: int = 0

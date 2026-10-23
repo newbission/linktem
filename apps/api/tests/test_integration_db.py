@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -20,7 +21,8 @@ from fastapi import BackgroundTasks
 
 from app.config import Settings
 from app.db import create_pool
-from app.services.analyzer import AnalysisError, Analyzer
+from app.schemas import VideoAnalysisResponse
+from app.services.analyzer import JOB_INTERRUPTED_MESSAGE, AnalysisError, Analyzer
 from app.services.downloader import DownloadedVideo, VideoMeta
 from app.services.image_processor import ImageProcessor
 from app.services.storage import UploadedImage, cleanup_expired_images
@@ -120,7 +122,8 @@ async def env(sample_video: Path):
     assert pool is not None
     async with pool.acquire() as conn:
         await conn.execute(
-            "truncate user_feedback, image_lifecycle_logs, video_items, products, videos restart identity cascade"
+            "truncate analysis_jobs, user_feedback, image_lifecycle_logs, video_items, products, videos"
+            " restart identity cascade"
         )
     gemini, storage, downloader = FakeGemini(), FakeStorage(), FakeDownloader(sample_video)
     analyzer = Analyzer(
@@ -131,11 +134,25 @@ async def env(sample_video: Path):
     await pool.close()
 
 
+async def resolve(analyzer: Analyzer, url: str, client: str, bg: BackgroundTasks | None = None) -> VideoAnalysisResponse:
+    """POST /api/analyze → (처음 보는 영상이면) 작업 완료까지 대기 → GET /api/jobs/{id} 의 video."""
+    bg = bg if bg is not None else BackgroundTasks()
+    resp = await analyzer.analyze(url, client, bg)
+    if resp.video is not None:
+        assert resp.job is None
+        await bg()  # 응답 이후 실행될 BackgroundTask 를 즉시 실행
+        return resp.video
+    assert resp.job is not None and resp.job.status == "queued"
+    await analyzer.drain_jobs()
+    done = await analyzer.get_job(resp.job.job_id)
+    assert done.job is not None and done.job.status == "done", done.job and done.job.error
+    assert done.video is not None and done.job.video_id == done.video.video_id
+    return done.video
+
+
 async def request(analyzer: Analyzer, client: str):
     bg = BackgroundTasks()
-    resp = await analyzer.analyze(URL, client, bg)
-    await bg()  # 응답 이후 실행될 BackgroundTask 를 즉시 실행
-    return resp, bg
+    return await resolve(analyzer, URL, client, bg), bg
 
 
 async def test_progressive_ensemble_to_lock(env) -> None:
@@ -215,7 +232,7 @@ async def test_feedback_hides_item_and_related_videos(env) -> None:
     # 다른 영상에도 같은 상품(신라면)이 나오면 관련 영상으로 연결
     other_url = "https://www.youtube.com/shorts/aaaaaaaaaaa"
     bg = BackgroundTasks()
-    other = await analyzer.analyze(other_url, "client-9", bg)
+    other = await resolve(analyzer, other_url, "client-9", bg)
     related = await analyzer.related(other.video_id)
     gyoza_other = next(i for i in other.items if i.name_en == GYOZA[1])
     assert related.items[gyoza_other.id][0].video_id == first.video_id
@@ -253,7 +270,7 @@ async def test_related_videos_match_across_retailers(env) -> None:
         return [item]
 
     gemini.analyze_youtube_url = costco_run  # type: ignore[method-assign]
-    other = await analyzer.analyze("https://www.youtube.com/shorts/bbbbbbbbbbb", "client-2", BackgroundTasks())
+    other = await resolve(analyzer, "https://www.youtube.com/shorts/bbbbbbbbbbb", "client-2")
     assert other.items[0].retailer == "코스트코"
     first_gyoza = next(i for i in first.items if i.name_en == GYOZA[1])
     assert first_gyoza.retailer == "이마트", "아이템 판매처는 영상별로 유지"
@@ -269,9 +286,8 @@ async def test_cached_video_served_without_ai(env) -> None:
     gemini.enabled = False
     downloads_before = downloader.calls
 
-    bg = BackgroundTasks()
-    cached = await analyzer.analyze("https://www.youtube.com/shorts/dQw4w9WgXcQ", "client-2", bg)
-    await bg()  # 2회차 백그라운드 작업은 Gemini 비활성이라 아무것도 하지 않아야 함
+    # 2회차 백그라운드 작업은 Gemini 비활성이라 아무것도 하지 않아야 함
+    cached = await resolve(analyzer, "https://www.youtube.com/shorts/dQw4w9WgXcQ", "client-2")
     assert cached.video_id == first.video_id
     assert {i.id for i in cached.items} == {i.id for i in first.items}
     assert downloader.calls == downloads_before, "캐시 응답에는 다운로드도 없어야 함"
@@ -279,3 +295,91 @@ async def test_cached_video_served_without_ai(env) -> None:
     with pytest.raises(AnalysisError) as err:
         await analyzer.analyze("https://youtu.be/bbbbbbbbbbb", "client-3", BackgroundTasks())
     assert err.value.status_code == 503, "처음 보는 영상만 AI 미설정 에러"
+
+
+async def test_first_analysis_runs_as_shared_background_job(env) -> None:
+    """처음 보는 영상: 요청은 작업만 받고 즉시 반환, 동시에 들어온 다른 요청자는 같은 작업을 공유."""
+    analyzer, pool, gemini, storage, downloader, settings = env
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = gemini.analyze_youtube_url
+
+    async def slow_run(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+        started.set()
+        await release.wait()
+        return await original(url, run_index, duration)
+
+    gemini.analyze_youtube_url = slow_run  # type: ignore[method-assign]
+    first = await analyzer.analyze(URL, "client-1", BackgroundTasks())
+    second = await analyzer.analyze("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "client-2", BackgroundTasks())
+    assert first.video is None and first.job is not None
+    assert second.job is not None and second.job.job_id == first.job.job_id, "같은 영상은 작업 1개 공유"
+
+    await asyncio.wait_for(started.wait(), timeout=5)
+    progress = await analyzer.get_job(first.job.job_id)
+    assert progress.job is not None and progress.job.status == "running"
+    assert progress.job.stage in {"downloading", "analyzing"} and progress.video is None
+
+    release.set()
+    await analyzer.drain_jobs()
+    done = await analyzer.get_job(first.job.job_id)
+    assert done.job is not None and done.job.status == "done" and done.job.stage == "done"
+    assert done.video is not None and done.video.analysis_count == 1
+    assert gemini.calls == [1], "동시 요청이어도 AI 분석은 1회"
+
+    # 완료 후 같은 링크는 작업 없이 바로 결과
+    cached = await analyzer.analyze(URL, "client-1", BackgroundTasks())
+    assert cached.job is None and cached.video is not None and cached.video.video_id == done.video.video_id
+
+
+async def test_failed_job_reports_reason(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+
+    async def nothing(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+        return []
+
+    gemini.analyze_youtube_url = nothing  # type: ignore[method-assign]
+    resp = await analyzer.analyze(URL, "client-1", BackgroundTasks())
+    assert resp.job is not None
+    await analyzer.drain_jobs()
+    failed = await analyzer.get_job(resp.job.job_id)
+    assert failed.job is not None and failed.job.status == "failed" and failed.job.stage == "failed"
+    assert failed.job.error_code == 422 and failed.job.error and "상품" in failed.job.error
+    assert failed.video is None
+
+    # 실패한 작업은 진행 중 목록에서 빠지므로 같은 링크로 다시 시도하면 새 작업
+    retry = await analyzer.analyze(URL, "client-1", BackgroundTasks())
+    assert retry.job is not None and retry.job.job_id != resp.job.job_id
+    await analyzer.drain_jobs()
+
+    with pytest.raises(AnalysisError) as err:
+        await analyzer.get_job("00000000-0000-0000-0000-000000000000")
+    assert err.value.status_code == 404
+
+
+async def test_interrupted_jobs_are_failed_on_startup(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+    async with pool.acquire() as conn:
+        job_id = await conn.fetchval(
+            """
+            insert into analysis_jobs (platform, canonical_key, source_url, client_hash, status, stage)
+            values ('youtube', 'youtube:zzzzzzzzzzz', 'https://www.youtube.com/watch?v=zzzzzzzzzzz', 'c', 'running', 'analyzing')
+            returning id
+            """
+        )
+    assert await analyzer.fail_interrupted_jobs() == 1
+    job = await analyzer.get_job(str(job_id))
+    assert job.job is not None and job.job.status == "failed" and job.job.error == JOB_INTERRUPTED_MESSAGE
+
+
+async def test_lookup_videos_does_not_count_requests(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+    first, _ = await request(analyzer, "client-1")
+    videos = await analyzer.lookup_videos([first.video_id, "not-a-uuid", "00000000-0000-0000-0000-000000000000"])
+    assert [v.video_id for v in videos] == [first.video_id]
+    assert videos[0].analysis_count == 1, "조회는 회차를 올리지 않음"
+    assert gemini.calls == [1]
+
+    with pytest.raises(AnalysisError) as err:
+        await analyzer.lookup_videos([str(UUID(int=n)) for n in range(1, 40)])
+    assert err.value.status_code == 400

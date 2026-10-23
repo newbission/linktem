@@ -8,8 +8,8 @@ import 'server-only';
  */
 const FORWARD_REQUEST_HEADERS = ['content-type', 'accept', 'accept-language', 'user-agent', 'x-admin-token', 'if-none-match', 'if-modified-since'];
 const FORWARD_RESPONSE_HEADERS = ['content-type', 'content-length', 'retry-after', 'cache-control', 'etag', 'last-modified'];
-// 1회차 분석은 1분 이상 걸릴 수 있음
-const PROXY_TIMEOUT_MS = 180_000;
+// 분석은 서버 백그라운드 작업으로 돌고 API 요청은 모두 짧다 (작업 접수·진행 조회·캐시 조회)
+const PROXY_TIMEOUT_MS = 60_000;
 
 function target(): string {
   return (process.env.API_PROXY_TARGET || 'http://localhost:8000').replace(/\/+$/, '');

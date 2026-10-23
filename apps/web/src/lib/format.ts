@@ -21,6 +21,20 @@ export function timestampUrl(sourceUrl: string | undefined, sec: number): string
   }
 }
 
+/** 원본 링크의 플랫폼 이름 */
+export function platformLabel(sourceUrl: string | undefined): string {
+  if (!sourceUrl) return '영상';
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    if (host.includes('youtube.com') || host === 'youtu.be') return '유튜브';
+    if (host.includes('instagram.com')) return '인스타그램';
+    if (host.includes('tiktok.com')) return '틱톡';
+  } catch {
+    /* 잘못된 URL */
+  }
+  return '영상';
+}
+
 export function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
   const min = Math.floor(diff / 60_000);
