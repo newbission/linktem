@@ -26,7 +26,9 @@ pnpm dev:web          # http://localhost:3000
 
 ```bash
 cd apps/api && .venv/bin/python -m pytest
-# 실제 Postgres 통합 테스트 (migrations/001_init.sql 적용된 빈 DB, 테이블을 비움)
-TEST_DATABASE_URL=postgresql://... .venv/bin/python -m pytest tests/test_integration_db.py
+# 실제 Postgres 통합 테스트 — 테이블을 비우므로 앱 DB 와 분리된 전용 DB 사용 (이름에 "test" 없으면 skip)
+# 최초 1회: docker exec linktem-db-1 psql -U postgres -c "create database linktem_test"
+#          for f in migrations/*.sql; do docker exec -i linktem-db-1 psql -U postgres -d linktem_test < $f; done
+TEST_DATABASE_URL=postgresql://postgres:linktem@127.0.0.1:54329/linktem_test .venv/bin/python -m pytest
 pnpm --filter @linktem/web... run build
 ```

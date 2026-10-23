@@ -2,7 +2,7 @@
 
 외부 서비스(yt-dlp, Gemini, R2)는 가짜로 대체하고 ffmpeg 캡처와 SQL 은 실제로 실행한다.
 실행: TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/linktem_test pytest tests/test_integration_db.py
-(DB 에 migrations/001_init.sql 이 적용되어 있어야 하며, 테스트가 테이블을 비운다)
+(DB 에 migrations/*.sql 이 적용되어 있어야 하며, 테스트가 테이블을 비우므로 앱 DB 와 분리할 것)
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 import pytest
@@ -25,8 +26,11 @@ from app.services.image_processor import ImageProcessor
 from app.services.storage import UploadedImage, cleanup_expired_images
 
 DB_URL = os.environ.get("TEST_DATABASE_URL")
+# 테스트는 테이블을 truncate 하므로 앱이 쓰는 DB 를 가리키면 데이터가 지워진다 → DB 이름에 "test" 필수
+_DB_NAME = urlparse(DB_URL).path.lstrip("/") if DB_URL else ""
 pytestmark = [
     pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set"),
+    pytest.mark.skipif(bool(DB_URL) and "test" not in _DB_NAME, reason="TEST_DATABASE_URL 의 DB 이름에 'test' 가 없음 (앱 DB 보호)"),
     pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed"),
 ]
 
