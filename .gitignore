@@ -1,0 +1,36 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# env
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+
+# vercel
+.vercel
+
+# 로컬 스틸컷 저장소 (STORAGE_BACKEND=local)
+apps/api/data/

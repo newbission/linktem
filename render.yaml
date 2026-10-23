@@ -1,0 +1,39 @@
+# Render Blueprint — Linktem API (Free Docker Web Service)
+services:
+  - type: web
+    name: linktem-api
+    runtime: docker
+    plan: free
+    region: singapore
+    rootDir: apps/api
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: CORS_ORIGINS
+        value: https://linktem.vercel.app
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: R2_BUCKET
+        value: linktem
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: CLIENT_HASH_SALT
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
+      - key: YTDLP_COOKIES_B64
+        sync: false

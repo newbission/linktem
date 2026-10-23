@@ -1,0 +1,32 @@
+{
+  "name": "@linktem/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@linktem/types": "workspace:*",
+    "idb": "^8.0.4",
+    "lucide-react": "^1.61.0",
+    "next": "^14.2",
+    "react": "^18.3",
+    "react-dom": "^18.3",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18.3",
+    "@types/react-dom": "^18.3",
+    "autoprefixer": "^10.6.1",
+    "eslint": "^8.57",
+    "eslint-config-next": "^14.2",
+    "postcss": "^8.5.31",
+    "tailwindcss": "^3.4",
+    "typescript": "^5.6"
+  }
+}

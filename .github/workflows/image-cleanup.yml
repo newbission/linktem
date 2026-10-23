@@ -1,0 +1,16 @@
+# 하루 1회 만료 이미지 정리 (R2 무료 한도 방어)
+name: image-cleanup
+on:
+  schedule:
+    - cron: "0 18 * * *" # 03:00 KST
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/admin/cleanup
+        run: |
+          curl -fsS -X POST "${{ secrets.LINKTEM_API_URL }}/api/admin/cleanup" \
+            -H "X-Admin-Token: ${{ secrets.LINKTEM_ADMIN_TOKEN }}" \
+            --max-time 300

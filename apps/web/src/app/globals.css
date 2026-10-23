@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 설치형 PWA(standalone) 에서 노치 영역 확보 */
+@media (display-mode: standalone) {
+  header {
+    padding-top: env(safe-area-inset-top);
+  }
+}

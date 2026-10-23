@@ -1,0 +1,59 @@
+# 로컬 전체 스택: Postgres(마이그레이션 자동 적용) + API + Web
+#   docker compose up --build   →  http://localhost:3000
+# 실제 분석에는 apps/api/.env 에 GEMINI_API_KEY 가 필요 (R2 미설정 시 스틸컷 없이 동작)
+# 프로젝트 이름 고정 — 폴더 이름이 바뀌어도 컨테이너/볼륨 이름 유지
+name: linktem
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: linktem
+    ports:
+      - "54329:5432"
+    volumes:
+      - ./apps/api/migrations:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./apps/api
+    env_file:
+      - path: ./apps/api/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:linktem@db:5432/postgres
+      # .env 의 LOCAL_STORAGE_DIR 은 호스트 실행용 — 컨테이너에서는 볼륨 경로 사용
+      LOCAL_STORAGE_DIR: /app/data/media
+      CORS_ORIGINS: http://localhost:3000
+      APP_ENV: development
+    volumes:
+      - media:/app/data/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # 브라우저는 같은 출처 /api 로 호출 → web 컨테이너가 내부 네트워크로 api 에 프록시
+        # (localhost 가 아닌 Tailscale IP·LAN 주소로 접속해도 동작)
+        NEXT_PUBLIC_API_BASE_URL: ""
+    environment:
+      API_PROXY_TARGET: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  media:

@@ -1,0 +1,400 @@
+"""SQL 접근 계층 — 모든 함수는 asyncpg Connection 을 받아 호출 측이 트랜잭션 경계를 정한다."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Sequence
+from uuid import UUID
+
+import asyncpg
+
+REQUESTER_HASH_CAP = 50
+
+_VIDEO_COLUMNS = """
+    id, platform, canonical_key, source_url, source_title, creator_name, duration_sec,
+    analysis_count, is_locked, analysis_runs, requester_hashes, images_expired, last_requested_at
+"""
+
+
+# ---------------------------------------------------------------------------
+# videos
+# ---------------------------------------------------------------------------
+
+
+async def get_video_by_key(conn: asyncpg.Connection, canonical_key: str) -> asyncpg.Record | None:
+    return await conn.fetchrow(f"select {_VIDEO_COLUMNS} from videos where canonical_key = $1", canonical_key)
+
+
+async def get_video(conn: asyncpg.Connection, video_id: UUID | str, *, for_update: bool = False) -> asyncpg.Record | None:
+    suffix = " for update" if for_update else ""
+    return await conn.fetchrow(f"select {_VIDEO_COLUMNS} from videos where id = $1{suffix}", _uuid(video_id))
+
+
+async def insert_video(
+    conn: asyncpg.Connection,
+    *,
+    video_id: UUID,
+    platform: str,
+    canonical_key: str,
+    source_url: str,
+    source_title: str,
+    creator_name: str,
+    duration_sec: int | None,
+    first_run: list[dict[str, Any]],
+    client_hash: str,
+) -> asyncpg.Record | None:
+    """동일 canonical_key 가 이미 있으면 None (다른 인스턴스가 먼저 저장한 경우)."""
+    return await conn.fetchrow(
+        f"""
+        insert into videos (id, platform, canonical_key, source_url, source_title, creator_name, duration_sec,
+                            analysis_count, analysis_runs, requester_hashes)
+        values ($1, $2, $3, $4, $5, $6, $7, 1, $8::jsonb, array[$9]::text[])
+        on conflict (canonical_key) do nothing
+        returning {_VIDEO_COLUMNS}
+        """,
+        video_id,
+        platform,
+        canonical_key,
+        source_url,
+        source_title,
+        creator_name,
+        duration_sec,
+        [first_run],
+        client_hash,
+    )
+
+
+async def register_request(
+    conn: asyncpg.Connection, video_id: UUID, client_hash: str, max_runs: int
+) -> tuple[asyncpg.Record, bool, bool]:
+    """요청 1건을 기록하고 (갱신된 video, 회차 증가 여부, 이번 요청으로 동결 여부) 를 반환.
+
+    회차는 처음 보는 요청자일 때만 증가한다. 반드시 트랜잭션 안에서 호출할 것.
+    """
+    video = await get_video(conn, video_id, for_update=True)
+    if video is None:
+        raise LookupError(str(video_id))
+
+    hashes: list[str] = list(video["requester_hashes"] or [])
+    is_new_requester = client_hash not in hashes
+    counted = is_new_requester and not video["is_locked"] and video["analysis_count"] < max_runs
+
+    if not counted:
+        updated = await conn.fetchrow(
+            f"update videos set last_requested_at = now() where id = $1 returning {_VIDEO_COLUMNS}", video_id
+        )
+        return updated, False, False
+
+    hashes = (hashes + [client_hash])[-REQUESTER_HASH_CAP:]
+    new_count = video["analysis_count"] + 1
+    lock_now = new_count >= max_runs
+    updated = await conn.fetchrow(
+        f"""
+        update videos
+           set analysis_count = $2, requester_hashes = $3::text[], is_locked = is_locked or $4,
+               last_requested_at = now()
+         where id = $1
+        returning {_VIDEO_COLUMNS}
+        """,
+        video_id,
+        new_count,
+        hashes,
+        lock_now,
+    )
+    return updated, True, lock_now
+
+
+async def append_run(conn: asyncpg.Connection, video_id: UUID, run: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    row = await conn.fetchrow(
+        "update videos set analysis_runs = analysis_runs || $2::jsonb where id = $1 returning analysis_runs",
+        video_id,
+        [run],
+    )
+    return list(row["analysis_runs"]) if row else []
+
+
+async def update_video_meta(
+    conn: asyncpg.Connection, video_id: UUID, *, source_title: str, creator_name: str, duration_sec: int | None
+) -> None:
+    await conn.execute(
+        """
+        update videos
+           set source_title = coalesce(nullif($2, ''), source_title),
+               creator_name = coalesce(nullif($3, ''), creator_name),
+               duration_sec = coalesce($4, duration_sec)
+         where id = $1
+        """,
+        video_id,
+        source_title,
+        creator_name,
+        duration_sec,
+    )
+
+
+async def set_images_expired(conn: asyncpg.Connection, video_id: UUID, expired: bool) -> None:
+    await conn.execute("update videos set images_expired = $2 where id = $1", video_id, expired)
+
+
+async def stale_video_ids(conn: asyncpg.Connection, ttl_days: int, limit: int = 100) -> list[UUID]:
+    rows = await conn.fetch(
+        """
+        select id from videos
+         where images_expired = false and last_requested_at < now() - make_interval(days => $1)
+         order by last_requested_at
+         limit $2
+        """,
+        ttl_days,
+        limit,
+    )
+    return [r["id"] for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# video_items + products
+# ---------------------------------------------------------------------------
+
+
+async def list_items(conn: asyncpg.Connection, video_id: UUID, *, include_hidden: bool = False) -> list[asyncpg.Record]:
+    return await conn.fetch(
+        f"""
+        select vi.id, vi.video_id, vi.product_id, vi.timestamp_sec::float8 as timestamp_sec, vi.image_key,
+               vi.image_url, vi.edition_note, vi.vote_count, vi.same_count, vi.different_count, vi.is_hidden,
+               vi.position, vi.retailer, p.normalized_key, p.name_ko, p.name_en, p.category
+          from video_items vi
+          join products p on p.id = vi.product_id
+         where vi.video_id = $1 {"" if include_hidden else "and vi.is_hidden = false"}
+         order by vi.position, vi.timestamp_sec
+        """,
+        video_id,
+    )
+
+
+async def upsert_product(
+    conn: asyncpg.Connection, *, normalized_key: str, name_ko: str, name_en: str, category: str, retailer: str
+) -> asyncpg.Record:
+    return await conn.fetchrow(
+        """
+        insert into products (normalized_key, name_ko, name_en, category, retailer)
+        values ($1, $2, $3, $4, $5)
+        on conflict (normalized_key) do update set updated_at = now()
+        returning id, name_ko
+        """,
+        normalized_key,
+        name_ko,
+        name_en,
+        category,
+        retailer,
+    )
+
+
+async def upsert_item(
+    conn: asyncpg.Connection,
+    *,
+    video_id: UUID,
+    product_id: UUID,
+    retailer: str,
+    timestamp_sec: float,
+    image_key: str,
+    image_url: str,
+    edition_note: str | None,
+    vote_count: int,
+    position: int,
+) -> UUID:
+    return await conn.fetchval(
+        """
+        insert into video_items (video_id, product_id, retailer, timestamp_sec, image_key, image_url, edition_note,
+                                 vote_count, position)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (video_id, product_id) do update
+           set retailer = excluded.retailer,
+               timestamp_sec = excluded.timestamp_sec,
+               image_key = case when excluded.image_key <> '' then excluded.image_key else video_items.image_key end,
+               image_url = case when excluded.image_url <> '' then excluded.image_url else video_items.image_url end,
+               edition_note = excluded.edition_note,
+               vote_count = excluded.vote_count,
+               position = excluded.position
+        returning id
+        """,
+        video_id,
+        product_id,
+        retailer,
+        timestamp_sec,
+        image_key,
+        image_url,
+        edition_note,
+        vote_count,
+        position,
+    )
+
+
+async def update_item(
+    conn: asyncpg.Connection,
+    item_id: UUID,
+    *,
+    retailer: str,
+    timestamp_sec: float,
+    edition_note: str | None,
+    vote_count: int,
+    position: int,
+) -> None:
+    await conn.execute(
+        """
+        update video_items
+           set retailer = $2, timestamp_sec = $3, edition_note = $4, vote_count = $5, position = $6
+         where id = $1
+        """,
+        item_id,
+        retailer,
+        timestamp_sec,
+        edition_note,
+        vote_count,
+        position,
+    )
+
+
+async def set_item_image(conn: asyncpg.Connection, item_id: UUID, image_key: str, image_url: str) -> None:
+    await conn.execute(
+        "update video_items set image_key = $2, image_url = $3 where id = $1", item_id, image_key, image_url
+    )
+
+
+async def clear_video_images(conn: asyncpg.Connection, video_id: UUID) -> list[asyncpg.Record]:
+    """영상의 모든 아이템 이미지 참조를 비우고, 비우기 전 (id, image_key) 를 반환."""
+    return await conn.fetch(
+        """
+        with old as (
+            select id, image_key from video_items where video_id = $1 and image_key <> '' for update
+        )
+        update video_items vi set image_key = '', image_url = ''
+          from old where vi.id = old.id
+        returning old.id, old.image_key
+        """,
+        video_id,
+    )
+
+
+async def delete_items(conn: asyncpg.Connection, item_ids: Sequence[UUID]) -> None:
+    if item_ids:
+        await conn.execute("delete from video_items where id = any($1::uuid[])", list(item_ids))
+
+
+# ---------------------------------------------------------------------------
+# user_feedback
+# ---------------------------------------------------------------------------
+
+
+async def upsert_feedback(
+    conn: asyncpg.Connection, item_id: UUID, feedback_type: str, client_hash: str, hide_threshold: int
+) -> asyncpg.Record | None:
+    """1인 1표 피드백 반영 후 집계/숨김 상태를 반환. 아이템이 없으면 None. 트랜잭션 안에서 호출."""
+    exists = await conn.fetchval("select 1 from video_items where id = $1 for update", item_id)
+    if not exists:
+        return None
+    await conn.execute(
+        """
+        insert into user_feedback (video_item_id, feedback_type, client_hash)
+        values ($1, $2, $3)
+        on conflict (video_item_id, client_hash) do update set feedback_type = excluded.feedback_type
+        """,
+        item_id,
+        feedback_type,
+        client_hash,
+    )
+    return await conn.fetchrow(
+        """
+        with agg as (
+            select count(*) filter (where feedback_type = 'SAME')      as same_count,
+                   count(*) filter (where feedback_type = 'DIFFERENT') as different_count
+              from user_feedback where video_item_id = $1
+        )
+        update video_items vi
+           set same_count = agg.same_count,
+               different_count = agg.different_count,
+               is_hidden = (agg.different_count >= $2 and agg.different_count > agg.same_count * 2)
+          from agg
+         where vi.id = $1
+        returning vi.id, vi.same_count, vi.different_count, vi.is_hidden
+        """,
+        item_id,
+        hide_threshold,
+    )
+
+
+# ---------------------------------------------------------------------------
+# related
+# ---------------------------------------------------------------------------
+
+
+async def related_videos(conn: asyncpg.Connection, video_id: UUID, per_item: int = 5) -> list[asyncpg.Record]:
+    return await conn.fetch(
+        """
+        select item_id, video_id, source_title, creator_name, source_url
+          from (
+            select vi.id as item_id, v.id as video_id, v.source_title, v.creator_name, v.source_url,
+                   row_number() over (partition by vi.id order by v.last_requested_at desc) as rn
+              from video_items vi
+              join video_items o on o.product_id = vi.product_id and o.video_id <> vi.video_id
+                                and o.is_hidden = false
+              join videos v on v.id = o.video_id
+             where vi.video_id = $1 and vi.is_hidden = false
+          ) ranked
+         where rn <= $2
+         order by item_id, rn
+        """,
+        video_id,
+        per_item,
+    )
+
+
+# ---------------------------------------------------------------------------
+# image_lifecycle_logs
+# ---------------------------------------------------------------------------
+
+
+async def log_image_event(
+    conn: asyncpg.Connection,
+    *,
+    r2_key: str,
+    event: str,
+    video_id: UUID | None = None,
+    item_id: UUID | None = None,
+    size_bytes: int | None = None,
+    expires_at: datetime | None = None,
+    processed: bool = False,
+) -> None:
+    await conn.execute(
+        """
+        insert into image_lifecycle_logs (video_id, video_item_id, r2_key, event, size_bytes, expires_at, processed_at)
+        values ($1, $2, $3, $4, $5, $6, case when $7 then now() end)
+        """,
+        video_id,
+        item_id,
+        r2_key,
+        event,
+        size_bytes,
+        expires_at,
+        processed,
+    )
+
+
+async def due_superseded_images(conn: asyncpg.Connection, limit: int = 500) -> list[asyncpg.Record]:
+    return await conn.fetch(
+        """
+        select id, r2_key, video_id, video_item_id from image_lifecycle_logs
+         where event = 'SUPERSEDED' and processed_at is null and expires_at <= now()
+         order by expires_at
+         limit $1
+        """,
+        limit,
+    )
+
+
+async def mark_logs_processed(conn: asyncpg.Connection, log_ids: Sequence[int]) -> None:
+    if log_ids:
+        await conn.execute(
+            "update image_lifecycle_logs set processed_at = now() where id = any($1::bigint[])", list(log_ids)
+        )
+
+
+def _uuid(value: UUID | str) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))

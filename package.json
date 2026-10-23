@@ -1,0 +1,19 @@
+{
+  "name": "linktem",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Linktem (링크템) — 링크 하나로 완성되는 스마트 장보기 리스트",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:types": "pnpm --filter @linktem/types run build",
+    "dev:web": "pnpm build:types && pnpm --filter @linktem/web run dev",
+    "dev:api": "cd apps/api && uvicorn app.main:app --reload --port 8000",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test:api": "cd apps/api && python -m pytest"
+  }
+}
