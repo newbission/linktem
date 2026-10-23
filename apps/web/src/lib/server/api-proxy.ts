@@ -7,7 +7,9 @@ import 'server-only';
  * - API_PROXY_TARGET 은 런타임 환경변수 (빌드 후에도 변경 가능)
  */
 const FORWARD_REQUEST_HEADERS = ['content-type', 'accept', 'accept-language', 'user-agent', 'x-admin-token', 'if-none-match', 'if-modified-since'];
-const FORWARD_RESPONSE_HEADERS = ['content-type', 'content-length', 'retry-after', 'cache-control', 'etag', 'last-modified'];
+// content-length / content-encoding 은 넘기지 않는다: fetch 가 gzip 응답을 자동으로 풀기 때문에
+// 원래(압축된) 길이를 그대로 주면 브라우저가 본문을 중간에서 잘라 JSON 파싱이 실패한다 → "연결할 수 없어요"
+const FORWARD_RESPONSE_HEADERS = ['content-type', 'retry-after', 'cache-control', 'etag', 'last-modified'];
 // 분석은 서버 백그라운드 작업으로 돌고 API 요청은 모두 짧다 (작업 접수·진행 조회·캐시 조회)
 const PROXY_TIMEOUT_MS = 60_000;
 
