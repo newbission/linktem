@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="330" viewBox="0 0 960 330" role="img" aria-label="상품이 나온 순간 앞뒤 5컷 중 AI가 가장 선명한 1컷을 고르는 과정">
+<title>상품이 나온 순간 앞뒤 5컷 중 AI가 가장 선명한 1컷을 고르는 과정</title>
+<style>
+text{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;}
+.fb{transform-box:fill-box;transform-origin:center;}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;}}
+@keyframes scanner{0%{opacity:0;transform:translateX(0)} 4%{opacity:1;transform:translateX(0)} 4%{opacity:1;transform:translateX(0px)} 14%{opacity:1;transform:translateX(116px)} 24%{opacity:1;transform:translateX(232px)} 34%{opacity:1;transform:translateX(348px)} 44%{opacity:1;transform:translateX(464px)} 55%{opacity:1;transform:translateX(348px)} 94%{opacity:1;transform:translateX(348px)} 98%{opacity:0;transform:translateX(348px)} 100%{opacity:0;transform:translateX(0)}}.scanner{transform:translateX(348px);animation:scanner 9s ease-in-out infinite}@keyframes pick{0%{opacity:0;} 55%{opacity:0;} 58%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.pick{animation:pick 9s infinite}@keyframes out1{0%{opacity:0;transform:translateX(-30px)} 62%{opacity:0;transform:translateX(-30px)} 65%{opacity:1;transform:translateX(0)} 94%{opacity:1;transform:translateX(0)} 98%{opacity:0;transform:translateX(0)} 100%{opacity:0;transform:translateX(0)}}@keyframes out2{0%{opacity:0;transform:translateX(-30px)} 70%{opacity:0;transform:translateX(-30px)} 73%{opacity:1;transform:translateX(0)} 94%{opacity:1;transform:translateX(0)} 98%{opacity:0;transform:translateX(0)} 100%{opacity:0;transform:translateX(0)}}.out1{animation:out1 9s infinite}.out2{animation:out2 9s infinite}@keyframes dash{0%{stroke-dashoffset:24} 100%{stroke-dashoffset:0}}.flow{animation:dash .8s linear infinite}@keyframes v0{0%{opacity:0;} 6%{opacity:0;} 9%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.v0{animation:v0 9s infinite}@keyframes v1{0%{opacity:0;} 16%{opacity:0;} 19%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.v1{animation:v1 9s infinite}@keyframes v2{0%{opacity:0;} 26%{opacity:0;} 29%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.v2{animation:v2 9s infinite}@keyframes v3{0%{opacity:0;} 36%{opacity:0;} 39%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.v3{animation:v3 9s infinite}@keyframes v4{0%{opacity:0;} 46%{opacity:0;} 49%{opacity:1;} 94%{opacity:1;} 98%{opacity:0;} 100%{opacity:0;}}.v4{animation:v4 9s infinite}</style>
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ecfdf5"/><stop offset="1" stop-color="#f0f9ff"/></linearGradient></defs><rect x="1" y="1" width="958" height="328" rx="28" fill="url(#bg)" stroke="#d1fae5" stroke-width="2"/>
+<defs><filter id="blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3.5"/></filter><filter id="mblur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4 0.5"/></filter>
+<clipPath id="cf0"><rect x="52" y="88" width="104" height="104" rx="6"/></clipPath>
+<clipPath id="cf1"><rect x="168" y="88" width="104" height="104" rx="6"/></clipPath>
+<clipPath id="cf2"><rect x="284" y="88" width="104" height="104" rx="6"/></clipPath>
+<clipPath id="cf3"><rect x="400" y="88" width="104" height="104" rx="6"/></clipPath>
+<clipPath id="cf4"><rect x="516" y="88" width="104" height="104" rx="6"/></clipPath>
+</defs>
+<text x="40" y="52" font-size="16" font-weight="800" fill="#0f172a">상품이 나온 순간 앞뒤로 5컷을 뽑고 →</text>
+<text x="680" y="52" font-size="16" font-weight="800" fill="#0f172a">AI가 1컷을 골라요</text>
+<rect x="36" y="70" width="600" height="140" rx="12" fill="#0f172a"/>
+<rect x="48" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="48" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="88" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="88" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="128" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="128" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="168" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="168" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="208" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="208" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="248" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="248" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="288" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="288" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="328" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="328" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="368" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="368" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="408" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="408" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="448" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="448" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="488" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="488" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="528" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="528" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="568" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="568" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="608" y="76" width="18" height="7" rx="2" fill="#334155"/><rect x="608" y="197" width="18" height="7" rx="2" fill="#334155"/>
+<rect x="52" y="88" width="104" height="104" rx="6" fill="#e2e8f0"/>
+<g clip-path="url(#cf0)"><g filter="url(#blur)"><rect x="97.44" y="105.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="87.6" y="116.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="90.88" y="141.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="104" y="155.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text></g></g>
+<text x="104" y="234" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">-1초</text>
+<text class="v0" x="104" y="256" font-size="12" font-weight="800" fill="#ef4444" text-anchor="middle">흔들림</text>
+<rect x="168" y="88" width="104" height="104" rx="6" fill="#e2e8f0"/>
+<g clip-path="url(#cf1)"><rect x="257.44" y="111.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="247.6" y="122.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="250.88" y="147.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="264" y="161.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text></g>
+<text x="220" y="234" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">-0.5초</text>
+<text class="v1" x="220" y="256" font-size="12" font-weight="800" fill="#ef4444" text-anchor="middle">잘림</text>
+<rect x="284" y="88" width="104" height="104" rx="6" fill="#e2e8f0"/>
+<g clip-path="url(#cf2)"><rect x="329.44" y="105.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="319.6" y="116.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="322.88" y="141.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="336" y="155.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text><ellipse cx="332" cy="154" rx="34" ry="26" fill="#fdba74"/><rect x="286" y="148" width="30" height="18" rx="9" fill="#fdba74"/></g>
+<text x="336" y="234" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">딱 그때</text>
+<text class="v2" x="336" y="256" font-size="12" font-weight="800" fill="#ef4444" text-anchor="middle">손에 가림</text>
+<rect x="400" y="88" width="104" height="104" rx="6" fill="#e2e8f0"/>
+<g clip-path="url(#cf3)"><rect x="445.44" y="105.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="435.6" y="116.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="438.88" y="141.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="452" y="155.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text></g>
+<text x="452" y="234" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">+0.5초</text>
+<text class="v3" x="452" y="256" font-size="12" font-weight="800" fill="#059669" text-anchor="middle">선명 ✓</text>
+<rect x="516" y="88" width="104" height="104" rx="6" fill="#e2e8f0"/>
+<g clip-path="url(#cf4)"><g filter="url(#mblur)" opacity=".7"><rect x="551.44" y="105.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="541.6" y="116.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="544.88" y="141.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="558" y="155.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text></g><g filter="url(#mblur)" opacity=".7"><rect x="571.44" y="105.36" width="13.12" height="14.76" rx="2.46" fill="#fbbf24"/><rect x="561.6" y="116.84" width="32.8" height="70.52" rx="9.02" fill="#f59e0b"/><rect x="564.88" y="141.44" width="26.24" height="21.32" rx="3.28" fill="#fff7ed"/><text x="578" y="155.38" font-size="5.74" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text></g></g>
+<text x="568" y="234" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">+1초</text>
+<text class="v4" x="568" y="256" font-size="12" font-weight="800" fill="#ef4444" text-anchor="middle">흔들림</text>
+<g class="scanner"><rect x="47" y="83" width="114" height="114" rx="9" fill="none" stroke="#34d399" stroke-width="4"/></g>
+<g class="pick"><rect x="389" y="62" width="62" height="20" rx="10" fill="#059669"/><text x="420" y="76" font-size="11" font-weight="800" fill="#fff" text-anchor="middle">AI 선택</text></g>
+<path class="flow" d="M640 140 H674" stroke="#10b981" stroke-width="3" stroke-dasharray="8 4" fill="none"/>
+<g class="out1"><rect x="680" y="72" width="128" height="148" rx="14" fill="#fff" stroke="#10b981" stroke-width="2"/><rect x="692" y="84" width="104" height="104" rx="8" fill="#e2e8f0"/><rect x="736.8" y="93.2" width="14.4" height="16.2" rx="2.7" fill="#fbbf24"/><rect x="726" y="105.8" width="36" height="77.4" rx="9.9" fill="#f59e0b"/><rect x="729.6" y="132.8" width="28.8" height="23.4" rx="3.6" fill="#fff7ed"/><text x="744" y="148.1" font-size="6.3" font-weight="800" fill="#b45309" text-anchor="middle">OLIVE</text><text x="744" y="208" font-size="12" font-weight="800" fill="#0f172a" text-anchor="middle">확대 보기용</text><text x="744" y="246" font-size="11" fill="#64748b" text-anchor="middle">선명하게 · 50KB 이하</text></g>
+<g class="out2"><rect x="826" y="112" width="96" height="108" rx="14" fill="#fff" stroke="#a7f3d0" stroke-width="2"/><rect x="846" y="124" width="56" height="56" rx="6" fill="#e2e8f0"/><rect x="870" y="128" width="8" height="9" rx="1.5" fill="#fbbf24"/><rect x="864" y="135" width="20" height="43" rx="5.5" fill="#f59e0b"/><text x="874" y="206" font-size="12" font-weight="800" fill="#0f172a" text-anchor="middle">목록용</text><text x="874" y="246" font-size="11" fill="#64748b" text-anchor="middle">작고 빠르게</text></g>
+<text x="480" y="300" font-size="12.5" fill="#475569" text-anchor="middle">상품 이름과 가장 잘 맞고 선명한 컷을 골라요 · 사진이 틀렸다는 제보가 모이면 범위를 넓혀 다시 골라요</text>
+</svg>
