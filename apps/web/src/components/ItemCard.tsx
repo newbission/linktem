@@ -3,7 +3,6 @@
 import {
   Check,
   ChevronDown,
-  ChevronUp,
   Clapperboard,
   Flag,
   ImageOff,
@@ -38,9 +37,8 @@ interface Props {
   onOpenRelated: (url: string) => void;
   /** 스틸컷을 누르면 확대 보기 */
   onOpenImage: (itemId: string) => void;
-  /** 간단히 보기에서 펼친 카드: 테두리 없이 렌더링하고 '접기' 버튼 표시 */
+  /** 간단히 보기에서 펼친 상세: 행에 이미 있는 체크박스·번호·이름은 빼고 테두리 없이 렌더링 */
   embedded?: boolean;
-  onCollapse?: () => void;
 }
 
 export function ItemCard({
@@ -57,7 +55,6 @@ export function ItemCard({
   onOpenRelated,
   onOpenImage,
   embedded = false,
-  onCollapse,
 }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -110,19 +107,21 @@ export function ItemCard({
       }
     >
       <div className="flex gap-3">
-        {/* 체크박스 */}
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={checked}
-          aria-label={`${item.name_ko} ${checked ? '체크 해제' : '장바구니에 담음으로 체크'}`}
-          onClick={() => onToggle(item.id)}
-          className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition active:scale-90 ${
-            checked ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 bg-white text-transparent'
-          }`}
-        >
-          <Check size={16} strokeWidth={3.5} aria-hidden />
-        </button>
+        {/* 체크박스 (간단히 보기 상세에서는 행에 있으므로 생략) */}
+        {!embedded && (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={checked}
+            aria-label={`${item.name_ko} ${checked ? '체크 해제' : '장바구니에 담음으로 체크'}`}
+            onClick={() => onToggle(item.id)}
+            className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 transition active:scale-90 ${
+              checked ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 bg-white text-transparent'
+            }`}
+          >
+            <Check size={16} strokeWidth={3.5} aria-hidden />
+          </button>
+        )}
 
         {/* 스틸컷 */}
         <div className="relative h-[84px] w-[84px] shrink-0 overflow-hidden rounded-xl bg-slate-100">
@@ -171,20 +170,22 @@ export function ItemCard({
 
         {/* 상품 정보 */}
         <div className="min-w-0 flex-1">
-          <p className={`text-[15px] font-bold leading-snug text-slate-900 ${checked ? 'line-through' : ''}`}>
-            {number !== undefined && (
-              <span
-                className={`mr-1.5 inline-flex h-5 min-w-5 -translate-y-px items-center justify-center rounded-md px-1 align-middle text-[11px] font-extrabold no-underline ${
-                  checked ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'
-                }`}
-                aria-label={`${number}번`}
-              >
-                {number}
-              </span>
-            )}
-            {item.name_ko}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-slate-500">{item.name_en}</p>
+          {!embedded && (
+            <p className={`text-[15px] font-bold leading-snug text-slate-900 ${checked ? 'line-through' : ''}`}>
+              {number !== undefined && (
+                <span
+                  className={`mr-1.5 inline-flex h-5 min-w-5 -translate-y-px items-center justify-center rounded-md px-1 align-middle text-[11px] font-extrabold no-underline ${
+                    checked ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'
+                  }`}
+                  aria-label={`${number}번`}
+                >
+                  {number}
+                </span>
+              )}
+              {item.name_ko}
+            </p>
+          )}
+          <p className={`truncate text-xs text-slate-500 ${embedded ? '' : 'mt-0.5'}`}>{item.name_en}</p>
           {item.edition_note && <p className="mt-1 text-xs font-medium text-brand-700">{item.edition_note}</p>}
           <ItemNotes reason={item.reason} caution={item.caution} />
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -230,16 +231,6 @@ export function ItemCard({
               {REPORT_LABELS[type]}
             </span>
           ))}
-        {embedded && onCollapse && (
-          <button
-            type="button"
-            onClick={onCollapse}
-            className="ml-auto inline-flex items-center gap-0.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
-          >
-            <ChevronUp size={14} aria-hidden />
-            접기
-          </button>
-        )}
       </div>
       {reportOpen && (
         <div className="mt-2 rounded-xl bg-slate-50 p-2" role="group" aria-label="제보 유형">

@@ -17,22 +17,22 @@ interface Props {
   /** 판매처별 보기에서는 묶음 제목이 판매처라 생략 */
   showRetailer: boolean;
   onToggle: (itemId: string) => void;
-  /** 펼쳤을 때 보여줄 자세한 카드 (onCollapse: 다시 접기) */
-  renderDetail: (onCollapse: () => void) => ReactNode;
+  /** 펼쳤을 때 행 아래에 보여줄 상세 (사진·메모·제보 등) */
+  renderDetail: () => ReactNode;
 }
 
-/** 간단히 보기 한 줄: 체크 · 번호 · 이름(+에디션) · 주의 표시 · 판매처. 누르면 자세한 카드로 펼침 */
+/**
+ * 간단히 보기 한 줄: 체크 · 번호 · 이름(+에디션) · 주의 표시 · 판매처.
+ * 누르면 행은 그대로 두고 아래에 상세를 펼친다 → 펼치기/접기가 같은 자리(행 오른쪽 화살표)라 손을 옮길 필요가 없다.
+ */
 export function ItemRow({ item, number, reports, showRetailer, onToggle, renderDetail }: Props) {
   const [expanded, setExpanded] = useState(false);
   const checked = item.is_checked;
   const reported = reports.some((t) => t !== 'SAME');
 
-  if (expanded) {
-    return <li className="p-1.5">{renderDetail(() => setExpanded(false))}</li>;
-  }
-
   return (
-    <li className={`flex items-center gap-2.5 px-3 py-2.5 ${checked ? 'opacity-55' : ''}`}>
+    <li>
+      <div className={`flex items-center gap-2.5 px-3 py-2.5 ${checked ? 'opacity-55' : ''}`}>
       <button
         type="button"
         role="checkbox"
@@ -47,10 +47,10 @@ export function ItemRow({ item, number, reports, showRetailer, onToggle, renderD
       </button>
       <button
         type="button"
-        onClick={() => setExpanded(true)}
-        aria-expanded={false}
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        aria-label={`${number ? `${number}번 ` : ''}${item.name_ko} 자세히 보기`}
+        aria-label={`${number ? `${number}번 ` : ''}${item.name_ko} ${expanded ? '접기' : '자세히 보기'}`}
       >
         {number !== undefined && (
           <span
@@ -78,8 +78,14 @@ export function ItemRow({ item, number, reports, showRetailer, onToggle, renderD
             {item.retailer}
           </span>
         )}
-        <ChevronDown size={15} className="shrink-0 text-slate-300" aria-hidden />
+        <ChevronDown
+          size={15}
+          className={`shrink-0 transition ${expanded ? 'rotate-180 text-slate-500' : 'text-slate-300'}`}
+          aria-hidden
+        />
       </button>
+      </div>
+      {expanded && <div className="px-2 pb-2">{renderDetail()}</div>}
     </li>
   );
 }

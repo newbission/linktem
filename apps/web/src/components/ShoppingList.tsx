@@ -144,7 +144,7 @@ export function ShoppingList({
                       key={item.id}
                       {...shared}
                       showRetailer={tab !== 'retailer'}
-                      renderDetail={(onCollapse) => (
+                      renderDetail={() => (
                         <ItemCard
                           {...shared}
                           imageSrc={imageMap[item.image_url]}
@@ -152,7 +152,6 @@ export function ShoppingList({
                           onSendReports={onSendReports}
                           onOpenRelated={onOpenRelated}
                           onOpenImage={onOpenImage}
-                          onCollapse={onCollapse}
                           embedded
                         />
                       )}
