@@ -26,6 +26,7 @@ GitHub Actions(매일 03:00 KST) ──▶ POST /api/admin/cleanup
    - `apps/api/migrations/003_analysis_jobs.sql` (백그라운드 분석 작업 테이블)
    - `apps/api/migrations/004_item_details.sql` (썸네일 URL, 추천 이유·주의점 메모 컬럼)
    - `apps/api/migrations/005_report_types.sql` (제보 유형 확장)
+   - `apps/api/migrations/006_summary_cover_comment.sql` (영상 요약·대표 이미지, 제보 의견)
 3. Project Settings → Database → Connection string → **Transaction pooler (6543)** 복사
    🔑 `DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres`
    - 비밀번호에 `@ : / ?` 등이 있으면 URL 인코딩 필요

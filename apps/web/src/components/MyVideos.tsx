@@ -237,6 +237,11 @@ function VideoRow({
 }) {
   const done = video.items.filter((i) => checked[i.id]).length;
   const title = video.source_title || '제목 없는 영상';
+  const allDone = done === video.items.length && video.items.length > 0;
+  // 대표 이미지 → 첫 상품 썸네일
+  const cover =
+    video.thumb_url || video.items.find((i) => i.thumb_url || i.image_url)?.thumb_url || video.items.find((i) => i.image_url)?.image_url;
+  const [coverFailed, setCoverFailed] = useState(false);
   return (
     <li className="flex items-center gap-2 rounded-2xl p-2 ring-1 ring-slate-100">
       <button
@@ -245,15 +250,32 @@ function VideoRow({
         className="flex min-w-0 flex-1 items-start gap-2.5 rounded-xl p-1 text-left hover:bg-slate-50"
         aria-label={`${title} 상품 보기`}
       >
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-          {done === video.items.length && video.items.length > 0 ? (
-            <CircleCheck size={16} className="text-brand-600" aria-hidden />
+        <span className="relative h-16 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100 text-slate-400">
+          {cover && !coverFailed ? (
+            <img
+              src={cover}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              onError={() => setCoverFailed(true)}
+              className={`h-full w-full object-cover ${allDone ? 'opacity-60' : ''}`}
+            />
           ) : (
-            <ListVideo size={16} aria-hidden />
+            <span className="flex h-full w-full items-center justify-center">
+              <ListVideo size={16} aria-hidden />
+            </span>
+          )}
+          {allDone && (
+            <span className="absolute inset-0 flex items-center justify-center">
+              <CircleCheck size={20} className="rounded-full bg-white text-brand-600" aria-label="모두 담음" />
+            </span>
           )}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-bold text-slate-900">{title}</span>
+          {video.summary && (
+            <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-slate-600">{video.summary}</span>
+          )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-500">
             <span>{platformLabel(video.source_url)}</span>
             {video.creator_name && <span className="max-w-[9rem] truncate">· {video.creator_name}</span>}

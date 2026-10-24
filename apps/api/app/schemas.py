@@ -65,6 +65,8 @@ class VideoAnalysisResponse(BaseModel):
     is_locked: bool
     items: list[ShoppingItem]
     source_url: Optional[str] = None
+    summary: Optional[str] = None
+    thumb_url: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ class UserFeedbackRequest(BaseModel):
     item_id: str = Field(..., min_length=1, max_length=64)
     feedback_type: FeedbackType
     cancel: Optional[bool] = None
+    comment: Optional[str] = Field(default=None, max_length=300)
 
 
 class UserFeedbackResponse(BaseModel):

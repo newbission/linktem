@@ -194,6 +194,7 @@ async def feedback(
         client_hash(request, settings.client_hash_salt),
         background,
         cancel=bool(body.cancel),
+        comment=body.comment,
     )
 
 

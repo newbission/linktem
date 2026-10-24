@@ -22,6 +22,7 @@ from fastapi import BackgroundTasks
 from app.config import Settings
 from app.db import create_pool
 from app.schemas import VideoAnalysisResponse
+from app.services.gemini import ExtractionResult
 from app.services.analyzer import JOB_INTERRUPTED_MESSAGE, AnalysisError, Analyzer
 from app.services.downloader import DownloadedVideo, VideoMeta
 from app.services.image_processor import ImageProcessor
@@ -76,11 +77,11 @@ class FakeGemini:
     def __init__(self) -> None:
         self.calls: list[int] = []
 
-    async def analyze_youtube_url(self, url: str, run_index: int, duration: int | None = None) -> list[dict]:
+    async def analyze_youtube_url(self, url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
         self.calls.append(run_index)
-        return [dict(i) for i in SCRIPTED_RUNS[run_index - 1]]
+        return ExtractionResult([dict(i) for i in SCRIPTED_RUNS[run_index - 1]], summary=f"이마트 장보기 하울 {run_index}회차")
 
-    async def analyze_file(self, path: Path, run_index: int, duration: int | None = None) -> list[dict]:
+    async def analyze_file(self, path: Path, run_index: int, duration: int | None = None) -> ExtractionResult:
         return await self.analyze_youtube_url("", run_index, duration)
 
 
@@ -161,6 +162,8 @@ async def test_progressive_ensemble_to_lock(env) -> None:
     # --- 1회차: 즉시 분석 ---
     first, _ = await request(analyzer, "client-1")
     assert first.analysis_count == 1 and not first.is_locked
+    assert first.summary == "이마트 장보기 하울 1회차"
+    assert first.thumb_url is None, "대표 이미지 URL 이 없으면 비움 (클라이언트가 첫 상품 썸네일로 대체)"
     assert {i.name_en for i in first.items} == {GYOZA[1], RAMEN[1], GHOST[1]}
     assert all(i.image_url.startswith("https://img.test/captures/") for i in first.items)
     ids_by_name = {i.name_en: i.id for i in first.items}
@@ -189,6 +192,7 @@ async def test_progressive_ensemble_to_lock(env) -> None:
 
     # --- 4회차 ---
     fourth, _ = await request(analyzer, "client-4")
+    assert (await analyzer.build_response(video_uuid)).summary == "이마트 장보기 하울 1회차", "첫 요약 유지"
     assert fourth.analysis_count == 4 and not fourth.is_locked
 
     # --- 5회차: 동결 ---
@@ -264,10 +268,10 @@ async def test_related_videos_match_across_retailers(env) -> None:
     analyzer, pool, gemini, storage, downloader, settings = env
     first, _ = await request(analyzer, "client-1")  # 이마트 비비고 왕교자
 
-    async def costco_run(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+    async def costco_run(url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
         item = raw(*GYOZA, 2.0)
         item["retailer"] = "Costco"
-        return [item]
+        return ExtractionResult([item])
 
     gemini.analyze_youtube_url = costco_run  # type: ignore[method-assign]
     other = await resolve(analyzer, "https://www.youtube.com/shorts/bbbbbbbbbbb", "client-2")
@@ -304,7 +308,7 @@ async def test_first_analysis_runs_as_shared_background_job(env) -> None:
     release = asyncio.Event()
     original = gemini.analyze_youtube_url
 
-    async def slow_run(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+    async def slow_run(url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
         started.set()
         await release.wait()
         return await original(url, run_index, duration)
@@ -335,8 +339,8 @@ async def test_first_analysis_runs_as_shared_background_job(env) -> None:
 async def test_failed_job_reports_reason(env) -> None:
     analyzer, pool, gemini, storage, downloader, settings = env
 
-    async def nothing(url: str, run_index: int, duration: int | None = None) -> list[dict]:
-        return []
+    async def nothing(url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
+        return ExtractionResult([])
 
     gemini.analyze_youtube_url = nothing  # type: ignore[method-assign]
     resp = await analyzer.analyze(URL, "client-1", BackgroundTasks())
@@ -389,11 +393,11 @@ async def test_thumbnails_and_notes_are_stored_and_cleaned(env) -> None:
     """확대용·썸네일 두 장 저장 + 추천 이유/주의점 메모 → 만료 정리 시 두 장 모두 삭제."""
     analyzer, pool, gemini, storage, downloader, settings = env
 
-    async def with_notes(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+    async def with_notes(url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
         item = raw(*GYOZA, 1.0)
         item["reason"] = "피가 얇고 육즙이 많아 에어프라이어에 돌리기 좋음"
         item["caution"] = "  '왕교자' 1.05kg — 일반 '물만두'와 헷갈리지 말 것  "
-        return [item, raw(*RAMEN, 2.0)]
+        return ExtractionResult([item, raw(*RAMEN, 2.0)])
 
     gemini.analyze_youtube_url = with_notes  # type: ignore[method-assign]
     first = await resolve(analyzer, URL, "client-1")
@@ -473,3 +477,17 @@ async def test_report_categories_and_image_recapture(env) -> None:
             "select count(*) from image_lifecycle_logs where event = 'SUPERSEDED' and r2_key = $1", old_key
         )
     assert superseded == 1
+
+
+async def test_report_comment_is_saved(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+    first = await resolve(analyzer, URL, "client-1")
+    item = first.items[0]
+    await analyzer.submit_feedback(item.id, "WRONG_DETAIL", "voter-1", comment="  1kg 이 아니라 500g 이에요  ")
+    await analyzer.submit_feedback(item.id, "WRONG_DETAIL", "voter-1")  # 의견 없이 다시 보내도 기존 의견 유지
+    async with pool.acquire() as conn:
+        comment = await conn.fetchval(
+            "select comment from user_feedback where video_item_id = $1 and feedback_type = 'WRONG_DETAIL'",
+            UUID(item.id),
+        )
+    assert comment == "1kg 이 아니라 500g 이에요"

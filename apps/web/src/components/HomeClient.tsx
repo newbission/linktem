@@ -9,7 +9,8 @@ import type { AnalysisJob, RelatedVideo, VideoAnalysisResponse } from '@linktem/
 import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, waitForServer } from '@/lib/api';
 import { groupEntries, toEntries, type FilterTab } from '@/lib/grouping';
 import { itemNumbers } from '@/lib/numbering';
-import { toggleReport, type ReportType } from '@/lib/reports';
+import { toggleReport, type SendReports } from '@/lib/reports';
+import { groupKey, useUiPrefs } from '@/lib/ui-prefs';
 import { canonicalVideoKey } from '@/lib/share';
 import { isActiveJob, useJobPolling } from '@/lib/use-job-polling';
 import { useOfflineImages, useOnlineStatus, useShoppingList } from '@/lib/use-shopping-list';
@@ -22,6 +23,7 @@ import { Footer } from './Footer';
 import { Header } from './Header';
 import { ImageViewer } from './ImageViewer';
 import { ListSummary } from './ListSummary';
+import { ListViewControls } from './ListViewControls';
 import { MyVideos } from './MyVideos';
 import { OfflineSaveButton } from './OfflineSaveButton';
 import { ShoppingList, videoGroupId } from './ShoppingList';
@@ -74,6 +76,12 @@ export function HomeClient() {
 
   const entries = useMemo(() => toEntries(list.videos, list.checked), [list.videos, list.checked]);
   const numbers = useMemo(() => itemNumbers(list.videos), [list.videos]);
+  const { compact, collapsed, setCompact, toggleCollapsed, setCollapsedMany } = useUiPrefs();
+  const groupKeys = useMemo(
+    () => (tab === 'all' ? [] : groupEntries(entries, tab).map((g) => groupKey(tab, g.key))),
+    [entries, tab],
+  );
+  const allCollapsed = groupKeys.length > 0 && groupKeys.every((k) => collapsed.includes(k));
   const imageUrls = useMemo(() => entries.map((e) => e.item.image_url).filter(Boolean), [entries]);
   const imageMap = useOfflineImages(imageUrls, offlineSavedAt);
   // 확대 보기 넘기기 순서 = 지금 탭에서 보이는 순서 (이미지가 있는 항목만)
@@ -213,11 +221,12 @@ export function HomeClient() {
 
   const showVideo = useCallback((videoId: string) => {
     setTab('video');
+    setCollapsedMany([groupKey('video', videoId)], false);
     // 탭 전환 렌더 후 해당 영상 묶음으로 이동
     setTimeout(() => {
       document.getElementById(videoGroupId(videoId))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 50);
-  }, []);
+  }, [setCollapsedMany]);
 
   // Web Share Target(/share → /?url=) 또는 외부 링크로 들어온 URL 자동 분석
   const handledParamRef = useRef(false);
@@ -241,31 +250,45 @@ export function HomeClient() {
     void refreshVideos(list.videos);
   }, [hydrated, list.videos, loadRelated, refreshVideos]);
 
-  const handleReport = useCallback(
-    async (itemId: string, type: ReportType, cancel: boolean) => {
-      const previous = list.feedback[itemId] ?? [];
-      setReports(itemId, toggleReport(previous, type, cancel));
+  /** '보내기'를 누른 제보 묶음을 서버로 보낸다. 성공한 것만 '보낸 제보'로 저장 */
+  const handleSendReports = useCallback<SendReports>(
+    async (itemId, add, remove, comment) => {
+      let current = list.feedback[itemId] ?? [];
+      let hidden = false;
+      let imageReset = false;
       try {
-        const res = await sendFeedback({ item_id: itemId, feedback_type: type, cancel: cancel || undefined });
-        if (res.is_hidden) {
-          hideItem(itemId);
-          setNotice('여러 분이 알려주셔서 이 제품을 리스트에서 뺐어요.');
-        } else if (res.image_reset) {
-          clearItemImage(itemId);
-          setNotice('사진을 다시 고르고 있어요. 잠시 후 바뀌어요');
-          // 서버가 새 사진을 고르는 데 보통 수십 초 — 두 번에 나눠 조용히 받아온다
-          const video = list.videos.find((v) => v.items.some((i) => i.id === itemId));
-          if (video) {
-            setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 30_000);
-            setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 90_000);
-          }
-        } else if (!cancel) {
-          setNotice('제보 고마워요! 확인해서 반영할게요');
+        for (const type of remove) {
+          await sendFeedback({ item_id: itemId, feedback_type: type, cancel: true });
+          current = toggleReport(current, type, true);
+        }
+        for (const type of add) {
+          const res = await sendFeedback({ item_id: itemId, feedback_type: type, comment });
+          current = toggleReport(current, type, false);
+          hidden ||= res.is_hidden;
+          imageReset ||= res.image_reset;
         }
       } catch (err) {
-        setReports(itemId, previous);
-        setError(err instanceof Error ? err.message : '제보를 보내지 못했어요.');
+        setReports(itemId, current);
+        setError(err instanceof Error ? `제보를 다 보내지 못했어요. ${err.message}` : '제보를 보내지 못했어요.');
+        return false;
       }
+      setReports(itemId, current);
+      if (hidden) {
+        hideItem(itemId);
+        setNotice('여러 분이 알려주셔서 이 제품을 리스트에서 뺐어요.');
+      } else if (imageReset) {
+        clearItemImage(itemId);
+        setNotice('사진을 다시 고르고 있어요. 잠시 후 바뀌어요');
+        // 서버가 새 사진을 고르는 데 보통 수십 초 — 두 번에 나눠 조용히 받아온다
+        const video = list.videos.find((v) => v.items.some((i) => i.id === itemId));
+        if (video) {
+          setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 30_000);
+          setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 90_000);
+        }
+      } else {
+        setNotice(add.length > 0 ? '제보를 보냈어요. 고마워요!' : '제보를 취소했어요');
+      }
+      return true;
     },
     [list.feedback, list.videos, setReports, hideItem, clearItemImage, refreshVideos],
   );
@@ -351,6 +374,13 @@ export function HomeClient() {
             />
             <ExportListPanel list={list} onNotice={setNotice} />
             <FilterTabs value={tab} onChange={setTab} />
+            <ListViewControls
+              compact={compact}
+              onCompactChange={setCompact}
+              groupCount={groupKeys.length}
+              allCollapsed={allCollapsed}
+              onCollapseAll={(value) => setCollapsedMany(groupKeys, value)}
+            />
             <ShoppingList
               entries={entries}
               tab={tab}
@@ -359,8 +389,11 @@ export function HomeClient() {
               feedback={list.feedback}
               numbers={numbers}
               online={online}
+              compact={compact}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
               onToggle={toggleChecked}
-              onReport={handleReport}
+              onSendReports={handleSendReports}
               onOpenRelated={analyze}
               onOpenImage={setViewerItemId}
               onRemoveVideo={removeVideo}

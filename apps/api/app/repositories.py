@@ -12,7 +12,8 @@ REQUESTER_HASH_CAP = 50
 
 _VIDEO_COLUMNS = """
     id, platform, canonical_key, source_url, source_title, creator_name, duration_sec,
-    analysis_count, is_locked, analysis_runs, requester_hashes, images_expired, last_requested_at
+    analysis_count, is_locked, analysis_runs, requester_hashes, images_expired, last_requested_at,
+    summary, cover_key, cover_url
 """
 
 
@@ -42,13 +43,16 @@ async def insert_video(
     duration_sec: int | None,
     first_run: list[dict[str, Any]],
     client_hash: str,
+    summary: str | None = None,
+    cover_key: str = "",
+    cover_url: str = "",
 ) -> asyncpg.Record | None:
     """동일 canonical_key 가 이미 있으면 None (다른 인스턴스가 먼저 저장한 경우)."""
     return await conn.fetchrow(
         f"""
         insert into videos (id, platform, canonical_key, source_url, source_title, creator_name, duration_sec,
-                            analysis_count, analysis_runs, requester_hashes)
-        values ($1, $2, $3, $4, $5, $6, $7, 1, $8::jsonb, array[$9]::text[])
+                            analysis_count, analysis_runs, requester_hashes, summary, cover_key, cover_url)
+        values ($1, $2, $3, $4, $5, $6, $7, 1, $8::jsonb, array[$9]::text[], $10, $11, $12)
         on conflict (canonical_key) do nothing
         returning {_VIDEO_COLUMNS}
         """,
@@ -61,6 +65,9 @@ async def insert_video(
         duration_sec,
         [first_run],
         client_hash,
+        summary,
+        cover_key,
+        cover_url,
     )
 
 
@@ -114,20 +121,29 @@ async def append_run(conn: asyncpg.Connection, video_id: UUID, run: list[dict[st
 
 
 async def update_video_meta(
-    conn: asyncpg.Connection, video_id: UUID, *, source_title: str, creator_name: str, duration_sec: int | None
+    conn: asyncpg.Connection,
+    video_id: UUID,
+    *,
+    source_title: str,
+    creator_name: str,
+    duration_sec: int | None,
+    summary: str | None = None,
 ) -> None:
+    """빈 값으로 덮어쓰지 않는다. 요약은 첫 요약을 유지하고 없을 때만 채운다 (회차마다 바뀌면 혼란)."""
     await conn.execute(
         """
         update videos
            set source_title = coalesce(nullif($2, ''), source_title),
                creator_name = coalesce(nullif($3, ''), creator_name),
-               duration_sec = coalesce($4, duration_sec)
+               duration_sec = coalesce($4, duration_sec),
+               summary = coalesce(summary, nullif($5, ''))
          where id = $1
         """,
         video_id,
         source_title,
         creator_name,
         duration_sec,
+        summary,
     )
 
 
@@ -311,6 +327,7 @@ async def upsert_feedback(
     hide_threshold: int,
     *,
     cancel: bool = False,
+    comment: str | None = None,
 ) -> asyncpg.Record | None:
     """제보 반영(또는 취소) 후 집계/숨김 상태를 반환. 아이템이 없으면 None. 트랜잭션 안에서 호출.
 
@@ -329,13 +346,16 @@ async def upsert_feedback(
     else:
         await conn.execute(
             """
-            insert into user_feedback (video_item_id, feedback_type, client_hash)
-            values ($1, $2, $3)
-            on conflict (video_item_id, client_hash, report_group) do update set feedback_type = excluded.feedback_type
+            insert into user_feedback (video_item_id, feedback_type, client_hash, comment)
+            values ($1, $2, $3, $4)
+            on conflict (video_item_id, client_hash, report_group) do update
+               set feedback_type = excluded.feedback_type,
+                   comment = coalesce(excluded.comment, user_feedback.comment)
             """,
             item_id,
             feedback_type,
             client_hash,
+            comment,
         )
     return await refresh_feedback_counts(conn, item_id, hide_threshold)
 

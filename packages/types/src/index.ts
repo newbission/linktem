@@ -63,6 +63,10 @@ export interface VideoAnalysisResponse {
    * (명세 대비 추가된 optional 필드, ADR-007)
    */
   source_url?: string;
+  /** 영상 전체 내용 한두 문장 요약 (AI) */
+  summary?: string;
+  /** 영상 대표 이미지 (없으면 첫 상품 썸네일로 대체) */
+  thumb_url?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +143,8 @@ export interface UserFeedbackRequest {
   feedback_type: FeedbackType;
   /** true 면 이 유형의 내 제보를 취소 */
   cancel?: boolean;
+  /** 제보와 함께 보내는 의견 (선택, 300자 이내) */
+  comment?: string;
 }
 
 /** POST /api/feedback 응답 본문 */

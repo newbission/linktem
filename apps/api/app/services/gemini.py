@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,19 @@ logger = logging.getLogger(__name__)
 MAX_ITEMS = 30
 # 메모는 카드에 한두 줄로 보여주므로 길게 받지 않는다
 MAX_NOTE_CHARS = 120
+MAX_SUMMARY_CHARS = 160
 
 RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
+        "summary": {
+            "type": "STRING",
+            "nullable": True,
+            "description": (
+                "영상 전체 내용을 한두 문장(80자 이내)으로 요약. 어디서 무엇을 샀고 어떤 영상인지. "
+                "예: '트레이더 조에서 산 간식·소스 20가지 하울, 재구매템 위주로 소개'"
+            ),
+        },
         "items": {
             "type": "ARRAY",
             "description": "영상에 등장하거나 언급된 구매 가능한 상품 목록 (등장 순서대로)",
@@ -96,6 +106,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
         }
     },
     "required": ["items"],
+    "propertyOrdering": ["summary", "items"],
 }
 
 SYSTEM_INSTRUCTION = """당신은 한국 SNS 쇼핑 영상(장보기 하울, 살림템, 추천템)을 분석해 장보기 체크리스트를 만드는 전문가입니다.
@@ -126,7 +137,16 @@ class GeminiItem(BaseModel):
 
 
 class GeminiExtraction(BaseModel):
+    summary: str | None = None
     items: list[GeminiItem] = Field(default_factory=list)
+
+
+@dataclass
+class ExtractionResult:
+    """한 회차 분석 결과 — items 는 analysis_runs 에 그대로 저장되는 dict 목록."""
+
+    items: list[dict[str, Any]]
+    summary: str | None = None
 
 
 class GeminiError(RuntimeError):
@@ -151,11 +171,11 @@ class GeminiAnalyzer:
     # public
     # ------------------------------------------------------------------
 
-    async def analyze_youtube_url(self, url: str, run_index: int, duration: int | None = None) -> list[dict[str, Any]]:
+    async def analyze_youtube_url(self, url: str, run_index: int, duration: int | None = None) -> ExtractionResult:
         part = types.Part(file_data=types.FileData(file_uri=url))
         return await self._generate(part, run_index, duration)
 
-    async def analyze_file(self, path: Path, run_index: int, duration: int | None = None) -> list[dict[str, Any]]:
+    async def analyze_file(self, path: Path, run_index: int, duration: int | None = None) -> ExtractionResult:
         client = self._require_client()
         uploaded = await client.aio.files.upload(file=str(path), config=types.UploadFileConfig(mime_type="video/mp4"))
         try:
@@ -209,7 +229,7 @@ class GeminiAnalyzer:
             **extra,
         )
 
-    async def _generate(self, video_part: types.Part, run_index: int, duration: int | None) -> list[dict[str, Any]]:
+    async def _generate(self, video_part: types.Part, run_index: int, duration: int | None) -> ExtractionResult:
         client = self._require_client()
         prompt = "이 영상에서 장보기 체크리스트에 넣을 상품을 추출하세요."
         if duration:
@@ -247,7 +267,7 @@ class GeminiAnalyzer:
             await asyncio.sleep(2 * (attempt + 1) ** 2)
         raise GeminiError(f"Gemini 분석 실패: {last_error}") from last_error
 
-    def _parse(self, text: str, duration: int | None) -> list[dict[str, Any]]:
+    def _parse(self, text: str, duration: int | None) -> ExtractionResult:
         try:
             extraction = GeminiExtraction.model_validate(json.loads(text))
         except (json.JSONDecodeError, ValidationError) as exc:
@@ -274,7 +294,7 @@ class GeminiAnalyzer:
                     "confidence": round(min(1.0, max(0.0, float(item.confidence))), 3),
                 }
             )
-        return items
+        return ExtractionResult(items=items, summary=_clip_note(extraction.summary, MAX_SUMMARY_CHARS))
 
 
 def _mentions_tuning(exc: Exception) -> bool:
@@ -282,8 +302,8 @@ def _mentions_tuning(exc: Exception) -> bool:
     return any(word in text for word in ("thinking", "media_resolution", "media resolution"))
 
 
-def _clip_note(value: str | None) -> str | None:
+def _clip_note(value: str | None, limit: int = MAX_NOTE_CHARS) -> str | None:
     text = " ".join((value or "").split())
     if not text:
         return None
-    return text if len(text) <= MAX_NOTE_CHARS else text[: MAX_NOTE_CHARS - 1].rstrip() + "…"
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"

@@ -39,3 +39,11 @@ export function migrateReports(raw: unknown): Record<string, FeedbackType[]> {
   }
   return result;
 }
+
+/**
+ * 고른 제보를 서버로 보낸다 (add: 새로 보낼 유형, remove: 취소할 유형). 모두 성공하면 true.
+ * 메뉴에서 고르기만 해서는 보내지지 않고, '보내기'를 눌러야 이 함수가 호출된다.
+ */
+export type SendReports = (itemId: string, add: ReportType[], remove: ReportType[], comment?: string) => Promise<boolean>;
+
+export const MAX_REPORT_COMMENT = 300;

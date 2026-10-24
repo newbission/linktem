@@ -139,6 +139,12 @@ class ImageProcessor:
     # Pillow (CPU 작업 — 스레드에서 실행)
     # ------------------------------------------------------------------
 
+    def encode_cover(self, data: bytes) -> bytes:
+        """플랫폼 대표 이미지(JPEG 등) → 썸네일 크기 WebP."""
+        with Image.open(io.BytesIO(data)) as img:
+            frame = ImageOps.exif_transpose(img).convert("RGB")
+        return self.encode_thumb(frame)
+
     def encode_thumb(self, img: Image.Image) -> bytes:
         thumb = resize_short_side(img.convert("RGB"), self._settings.image_thumb_short_side)
         return _webp_bytes(thumb, self._settings.image_thumb_quality)

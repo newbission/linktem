@@ -3,21 +3,24 @@
 import {
   Check,
   ChevronDown,
+  ChevronUp,
   Clapperboard,
   Flag,
   ImageOff,
+  LoaderCircle,
   MessageSquareQuote,
   Play,
+  Send,
   TriangleAlert,
   X,
   ZoomIn,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import type { FeedbackType, RelatedVideo, ShoppingItem, VideoAnalysisResponse } from '@linktem/types';
 
 import { formatTimestamp, retailerStyle, timestampUrl } from '@/lib/format';
-import { REPORT_LABELS, REPORT_OPTIONS, type ReportType } from '@/lib/reports';
+import { MAX_REPORT_COMMENT, REPORT_LABELS, REPORT_OPTIONS, type ReportType, type SendReports } from '@/lib/reports';
 
 interface Props {
   item: ShoppingItem;
@@ -31,10 +34,13 @@ interface Props {
   online: boolean;
   showVideoTitle?: boolean;
   onToggle: (itemId: string) => void;
-  onReport: (itemId: string, type: ReportType, cancel: boolean) => void;
+  onSendReports: SendReports;
   onOpenRelated: (url: string) => void;
   /** 스틸컷을 누르면 확대 보기 */
   onOpenImage: (itemId: string) => void;
+  /** 간단히 보기에서 펼친 카드: 테두리 없이 렌더링하고 '접기' 버튼 표시 */
+  embedded?: boolean;
+  onCollapse?: () => void;
 }
 
 export function ItemCard({
@@ -47,24 +53,61 @@ export function ItemCard({
   online,
   showVideoTitle,
   onToggle,
-  onReport,
+  onSendReports,
   onOpenRelated,
   onOpenImage,
+  embedded = false,
+  onCollapse,
 }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  // 메뉴에서 고른 '보낼 제보' (보내기 전까지는 서버에 가지 않음)
+  const [draft, setDraft] = useState<ReportType[]>([]);
+  const [comment, setComment] = useState('');
+  const [sending, setSending] = useState(false);
   const checked = item.is_checked;
   // 오프라인 저장본 → 썸네일 → (썸네일 도입 전 캡처) 확대용 이미지
   const src = imageSrc ?? (item.thumb_url || item.image_url);
   const canZoom = Boolean(src) && !imageFailed;
   const sceneUrl = timestampUrl(video.source_url, item.timestamp_sec);
   const myReports = reports.filter((t): t is ReportType => t !== 'SAME');
+  const toAdd = draft.filter((t) => !myReports.includes(t));
+  const toRemove = myReports.filter((t) => !draft.includes(t));
+  const dirty = toAdd.length > 0 || toRemove.length > 0 || (comment.trim() !== '' && draft.length > 0);
+
+  const openReport = () => {
+    setDraft(myReports);
+    setComment('');
+    setReportOpen(true);
+  };
+
+  const toggleDraft = (type: ReportType) =>
+    setDraft((prev) => {
+      if (prev.includes(type)) return prev.filter((t) => t !== type);
+      // '다른 제품' 과 '영상에 없음' 은 함께 고를 수 없음 (서버도 1인 1표)
+      const exclusive: ReportType[] = ['WRONG_PRODUCT', 'NOT_IN_VIDEO'];
+      const base = exclusive.includes(type) ? prev.filter((t) => !exclusive.includes(t)) : prev;
+      return [...base, type];
+    });
+
+  const send = async () => {
+    if (!dirty || sending) return;
+    setSending(true);
+    // 의견만 바꾼 경우에도 고른 유형에 의견이 붙도록 다시 보낸다
+    const add = toAdd.length > 0 ? toAdd : comment.trim() ? draft : [];
+    const ok = await onSendReports(item.id, add, toRemove, comment.trim() || undefined);
+    setSending(false);
+    if (ok) setReportOpen(false);
+  };
 
   return (
-    <li
-      className={`rounded-2xl bg-white p-3 shadow-sm ring-1 transition ${
-        checked ? 'ring-slate-100 opacity-60' : 'ring-slate-200/80'
-      }`}
+    <Root
+      embedded={embedded}
+      className={
+        embedded
+          ? `rounded-xl bg-slate-50/70 p-2.5 ${checked ? 'opacity-60' : ''}`
+          : `rounded-2xl bg-white p-3 shadow-sm ring-1 transition ${checked ? 'ring-slate-100 opacity-60' : 'ring-slate-200/80'}`
+      }
     >
       <div className="flex gap-3">
         {/* 체크박스 */}
@@ -163,61 +206,98 @@ export function ItemCard({
         </div>
       </div>
 
-      {/* 제보 */}
+      {/* 제보: 메뉴에서 고르고 → (의견) → 보내기 */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
-          onClick={() => setReportOpen((v) => !v)}
+          onClick={() => (reportOpen ? setReportOpen(false) : openReport())}
           disabled={!online}
           aria-expanded={reportOpen}
           className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 transition active:scale-95 disabled:opacity-40"
         >
           <Flag size={13} aria-hidden />
-          제보하기
+          {myReports.length > 0 ? '제보 수정' : '제보하기'}
           <ChevronDown size={13} className={`transition ${reportOpen ? 'rotate-180' : ''}`} aria-hidden />
         </button>
-        {myReports.map((type) => (
-          <span
-            key={type}
-            className="inline-flex items-center gap-1 rounded-full bg-amber-50 py-1 pl-2.5 pr-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200"
-          >
-            {REPORT_LABELS[type]}
-            <button
-              type="button"
-              onClick={() => onReport(item.id, type, true)}
-              disabled={!online}
-              className="rounded-full p-0.5 text-amber-500 hover:bg-amber-100 disabled:opacity-40"
-              aria-label={`'${REPORT_LABELS[type]}' 제보 취소`}
+        {!reportOpen &&
+          myReports.map((type) => (
+            <span
+              key={type}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200"
+              title="보낸 제보"
             >
-              <X size={12} />
-            </button>
-          </span>
-        ))}
+              <Check size={11} aria-hidden />
+              {REPORT_LABELS[type]}
+            </span>
+          ))}
+        {embedded && onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="ml-auto inline-flex items-center gap-0.5 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+          >
+            <ChevronUp size={14} aria-hidden />
+            접기
+          </button>
+        )}
       </div>
       {reportOpen && (
         <div className="mt-2 rounded-xl bg-slate-50 p-2" role="group" aria-label="제보 유형">
-          <p className="px-1 pb-1.5 text-[11px] text-slate-500">해당하는 걸 모두 눌러 주세요. 다시 누르면 취소돼요.</p>
+          <p className="px-1 pb-1.5 text-[11px] text-slate-500">
+            해당하는 걸 모두 고른 뒤 <b>보내기</b>를 눌러 주세요. 보낸 제보를 빼면 취소돼요.
+          </p>
           <div className="grid grid-cols-1 gap-1 min-[380px]:grid-cols-2">
             {REPORT_OPTIONS.map(({ type, label, hint }) => {
-              const active = myReports.includes(type);
+              const active = draft.includes(type);
+              const sent = myReports.includes(type);
               return (
                 <button
                   key={type}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => onReport(item.id, type, active)}
-                  title={hint}
+                  onClick={() => toggleDraft(type)}
                   className={`rounded-lg px-2.5 py-2 text-left text-xs font-semibold ring-1 transition active:scale-[0.98] ${
                     active
                       ? 'bg-amber-100 text-amber-900 ring-amber-300'
                       : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-100'
                   }`}
                 >
-                  {label}
+                  <span className="flex items-center justify-between gap-1">
+                    {label}
+                    {sent && <span className="text-[10px] font-medium text-amber-700">보냄</span>}
+                  </span>
                   <span className="mt-0.5 block text-[10px] font-normal leading-snug text-slate-500">{hint}</span>
                 </button>
               );
             })}
+          </div>
+          <label className="mt-2 block">
+            <span className="sr-only">제보 의견</span>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value.slice(0, MAX_REPORT_COMMENT))}
+              rows={2}
+              placeholder="자세히 알려주시면 더 빨리 고쳐요 (선택) — 예: 1kg 이 아니라 500g 이에요"
+              className="w-full resize-none rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none"
+            />
+          </label>
+          <div className="mt-1.5 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setReportOpen(false)}
+              className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+            >
+              닫기
+            </button>
+            <button
+              type="button"
+              onClick={send}
+              disabled={!dirty || sending || !online}
+              className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-bold text-white transition active:scale-95 disabled:bg-slate-300"
+            >
+              {sending ? <LoaderCircle size={13} className="animate-spin" aria-hidden /> : <Send size={13} aria-hidden />}
+              {toRemove.length > 0 && toAdd.length === 0 && !comment.trim() ? '취소 보내기' : '보내기'}
+            </button>
           </div>
         </div>
       )}
@@ -243,8 +323,13 @@ export function ItemCard({
           </div>
         </div>
       )}
-    </li>
+    </Root>
   );
+}
+
+function Root({ embedded, className, children }: { embedded: boolean; className: string; children: ReactNode }) {
+  // 간단히 보기에서 펼친 카드는 이미 <li> 안에 있으므로 div 로
+  return embedded ? <div className={className}>{children}</div> : <li className={className}>{children}</li>;
 }
 
 /** 영상에서 말한 추천 이유 / 헷갈리지 말아야 할 점 (AI 요약) */

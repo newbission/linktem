@@ -52,6 +52,8 @@ class VideoMeta:
     uploader: str
     duration: int | None
     webpage_url: str
+    # 플랫폼 대표 이미지 URL (만료될 수 있어 대표 이미지는 받아서 직접 저장)
+    thumbnail_url: str = ""
 
 
 @dataclass
@@ -151,6 +153,7 @@ def _meta_from_info(info: dict[str, Any]) -> VideoMeta:
         uploader=str(info.get("uploader") or info.get("channel") or info.get("uploader_id") or "")[:120],
         duration=int(duration) if duration else None,
         webpage_url=str(info.get("webpage_url") or ""),
+        thumbnail_url=str(info.get("thumbnail") or ""),
     )
 
 

@@ -50,7 +50,7 @@ from app.services.ensemble import (
     normalize_name,
     parse_runs,
 )
-from app.services.gemini import GeminiAnalyzer, GeminiError
+from app.services.gemini import ExtractionResult, GeminiAnalyzer, GeminiError
 from app.services.frame_selector import FrameQuery, FrameSelector
 from app.services.image_processor import FrameCandidate, ImageProcessor, discard, sharpest
 from app.services.storage import (
@@ -68,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 # 타임스탬프가 이 이상 바뀌면 스틸컷을 다시 캡처
 RECAPTURE_THRESHOLD_SEC = 3.0
+# 대표 이미지 원본 최대 크기 (플랫폼 썸네일은 보통 100~300KB)
+MAX_COVER_SOURCE_BYTES = 5 * 1024 * 1024
 # '사진이 달라요' 제보로 다시 고를 때의 후보 구간 (처음보다 넓게)
 RECAPTURE_OFFSETS = (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0)
 # 리스트 갱신 조회(GET /api/videos)에서 한 번에 받을 수 있는 영상 수
@@ -295,18 +297,22 @@ class Analyzer:
         async with self._heavy:
             with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
                 workdir = Path(tmp)
-                downloaded, raw_items = await self._download_and_extract(target, workdir, 1, on_stage)
+                downloaded, result = await self._download_and_extract(target, workdir, 1, on_stage)
+                raw_items = result.items
                 if not raw_items:
                     raise AnalysisError(422, "영상에서 장보기 상품을 찾지 못했어요.")
 
                 await on_stage("capturing")
                 consensus = build_consensus(parse_runs([raw_items]))
+                cover_task = asyncio.create_task(self._make_cover(video_id, downloaded.meta.thumbnail_url))
                 uploads = await self._capture_and_upload(
                     video_id, downloaded, [CaptureTarget.of(c) for c in consensus], workdir
                 )
+                cover = await cover_task
 
         await on_stage("saving")
         uploaded_keys = [u.key for u in uploads if u]
+        cover_keys = [cover.key] if cover else []
         try:
             async with pool.acquire() as conn, conn.transaction():
                 video = await repo.insert_video(
@@ -320,17 +326,22 @@ class Analyzer:
                     duration_sec=downloaded.meta.duration,
                     first_run=raw_items,
                     client_hash=client_hash,
+                    summary=result.summary,
+                    cover_key=cover.key if cover else "",
+                    cover_url=cover.url if cover else "",
                 )
                 if video is not None:
                     for item, upload in zip(consensus, uploads):
                         await self._insert_consensus_item(conn, video_id, item, upload)
         except Exception:
             await delete_images(self._storage, uploaded_keys)
+            await self._storage.delete_keys(cover_keys)
             raise
 
         if video is None:
             # 다른 인스턴스/요청이 먼저 저장함 → 업로드한 이미지는 버리고 기존 영상으로
             await delete_images(self._storage, uploaded_keys)
+            await self._storage.delete_keys(cover_keys)
             async with pool.acquire() as conn:
                 existing = await repo.get_video_by_key(conn, target.canonical_key)
             assert existing is not None
@@ -378,7 +389,8 @@ class Analyzer:
                 async with self._heavy:
                     with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
                         workdir = Path(tmp)
-                        downloaded, raw_items = await self._download_and_extract(target, workdir, run_index)
+                        downloaded, result = await self._download_and_extract(target, workdir, run_index)
+                        raw_items = result.items
                         async with pool.acquire() as conn:
                             all_runs = await repo.append_run(conn, video_id, raw_items)
                             await repo.update_video_meta(
@@ -387,6 +399,7 @@ class Analyzer:
                                 source_title=downloaded.meta.title,
                                 creator_name=downloaded.meta.uploader,
                                 duration_sec=downloaded.meta.duration,
+                                summary=result.summary,
                             )
                         await self._apply_consensus(video_id, all_runs, downloaded, workdir)
                 logger.info("video %s ensemble run %d applied (%d items)", video_id, run_index, len(raw_items))
@@ -599,7 +612,7 @@ class Analyzer:
 
     async def _download_and_extract(
         self, target: VideoTarget, workdir: Path, run_index: int, on_stage: StageCallback = _no_stage
-    ) -> tuple[DownloadedVideo, list[dict[str, Any]]]:
+    ) -> tuple[DownloadedVideo, ExtractionResult]:
         try:
             await on_stage("downloading")
             if target.platform == "youtube" and self._settings.gemini_use_youtube_url:
@@ -613,14 +626,14 @@ class Analyzer:
                     raise
                 await on_stage("analyzing")
                 try:
-                    raw_items = await gemini_task
+                    result = await gemini_task
                 except GeminiError as exc:
                     logger.warning("gemini youtube-url path failed (%s) — falling back to file upload", exc)
-                    raw_items = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
+                    result = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
             else:
                 downloaded = await self._downloader.download(target.url, workdir)
                 await on_stage("analyzing")
-                raw_items = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
+                result = await self._gemini.analyze_file(downloaded.path, run_index, downloaded.meta.duration)
         except VideoTooLongError as exc:
             raise AnalysisError(413, f"{exc.limit // 60}분 이하의 영상만 분석할 수 있어요.") from exc
         except NoVideoError as exc:
@@ -633,9 +646,9 @@ class Analyzer:
 
         duration = downloaded.meta.duration
         if duration:
-            for item in raw_items:
+            for item in result.items:
                 item["timestamp_sec"] = min(float(item["timestamp_sec"]), max(0.0, duration - 0.5))
-        return downloaded, raw_items
+        return downloaded, result
 
     async def _capture_and_upload(
         self,
@@ -699,6 +712,22 @@ class Analyzer:
             for candidates in per_target:
                 discard(candidates)
 
+    async def _make_cover(self, video_id: UUID, thumbnail_url: str) -> UploadedImage | None:
+        """플랫폼 대표 이미지를 받아 WebP 썸네일로 저장 ('내 분석 영상' 목록용). 실패하면 None (첫 상품 썸네일로 대체)."""
+        if not thumbnail_url.startswith("https://") or not self._storage.enabled:
+            return None
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+                resp = await client.get(thumbnail_url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            if len(resp.content) > MAX_COVER_SOURCE_BYTES:
+                return None
+            data = await asyncio.to_thread(self._images.encode_cover, resp.content)
+            return await self._storage.upload_webp(f"covers/{video_id}/{uuid.uuid4().hex}.webp", data)
+        except Exception as exc:  # noqa: BLE001 — 대표 이미지는 부가 정보
+            logger.info("cover fetch failed for %s: %s", video_id, exc)
+            return None
+
     async def _resolve_short_link(self, target: VideoTarget) -> VideoTarget:
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
@@ -725,6 +754,8 @@ class Analyzer:
             analysis_count=video["analysis_count"],
             is_locked=video["is_locked"],
             source_url=video["source_url"],
+            summary=video["summary"],
+            thumb_url=video["cover_url"] or None,
             items=[
                 ShoppingItem(
                     id=str(r["id"]),
@@ -753,13 +784,20 @@ class Analyzer:
         background: BackgroundTasks | None = None,
         *,
         cancel: bool = False,
+        comment: str | None = None,
     ) -> UserFeedbackResponse:
         pool = self._require_pool()
         item_uuid = _parse_uuid(item_id)
         image_reset = False
         async with pool.acquire() as conn, conn.transaction():
             row = await repo.upsert_feedback(
-                conn, item_uuid, feedback_type, client_hash, self._settings.feedback_hide_threshold, cancel=cancel
+                conn,
+                item_uuid,
+                feedback_type,
+                client_hash,
+                self._settings.feedback_hide_threshold,
+                cancel=cancel,
+                comment=(comment or "").strip() or None,
             )
             if row is None:
                 raise AnalysisError(404, "아이템을 찾을 수 없습니다.")
@@ -814,9 +852,19 @@ class Analyzer:
             async with self._heavy:
                 with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
                     workdir = Path(tmp)
-                    downloaded = await self._downloader.download(video["source_url"], workdir)
+                    try:
+                        downloaded = await self._downloader.download(video["source_url"], workdir)
+                    except DownloadError as exc:
+                        raise AnalysisError(502, str(exc)) from exc
                     uploads = await self._capture_and_upload(
                         vid, downloaded, [CaptureTarget.of_row(i) for i in items], workdir
+                    )
+            # 대표 이미지 도입 전에 분석된 영상이면 함께 채운다
+            cover = None if video["cover_url"] else await self._make_cover(vid, downloaded.meta.thumbnail_url)
+            if cover is not None:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "update videos set cover_key = $2, cover_url = $3 where id = $1", vid, cover.key, cover.url
                     )
             changed = 0
             try:

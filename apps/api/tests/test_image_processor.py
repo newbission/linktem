@@ -52,3 +52,11 @@ def test_resize_never_upscales() -> None:
     assert resize_short_side(small, 720).size == (360, 640)
     vertical = Image.new("RGB", (1080, 1920))
     assert resize_short_side(vertical, 720).size == (720, 1280)
+
+
+def test_encode_cover_makes_small_webp() -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (1280, 720), (200, 30, 30)).save(buf, format="JPEG")
+    data = ImageProcessor(Settings()).encode_cover(buf.getvalue())
+    cover = Image.open(io.BytesIO(data))
+    assert cover.format == "WEBP" and min(cover.size) == Settings().image_thumb_short_side
