@@ -26,22 +26,25 @@ def sample_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return path
 
 
-async def test_capture_produces_small_720p_webp(sample_video: Path, tmp_path: Path) -> None:
+async def test_capture_produces_720p_full_and_256p_thumb(sample_video: Path, tmp_path: Path) -> None:
     settings = Settings()
     processor = ImageProcessor(settings)
-    data = await processor.capture_webp(sample_video, 2.0, tmp_path, duration=4)
+    captured = await processor.capture_webp(sample_video, 2.0, tmp_path, duration=4)
 
-    img = Image.open(io.BytesIO(data))
-    assert img.format == "WEBP"
-    assert min(img.size) <= 720
-    assert img.size == (1280, 720)
-    assert len(data) <= settings.image_target_max_bytes
+    full = Image.open(io.BytesIO(captured.full))
+    assert full.format == "WEBP" and full.size == (1280, 720)
+    assert len(captured.full) <= settings.image_target_max_bytes
+
+    thumb = Image.open(io.BytesIO(captured.thumb))
+    assert thumb.format == "WEBP" and min(thumb.size) == settings.image_thumb_short_side
+    assert len(captured.thumb) < len(captured.full)
     assert not list(tmp_path.glob("*.png")), "temporary frames must be cleaned up"
 
 
 async def test_timestamp_beyond_duration_is_clamped(sample_video: Path, tmp_path: Path) -> None:
-    data = await ImageProcessor(Settings()).capture_webp(sample_video, 999.0, tmp_path, duration=4)
-    assert Image.open(io.BytesIO(data)).format == "WEBP"
+    captured = await ImageProcessor(Settings()).capture_webp(sample_video, 999.0, tmp_path, duration=4)
+    assert Image.open(io.BytesIO(captured.full)).format == "WEBP"
+    assert Image.open(io.BytesIO(captured.thumb)).format == "WEBP"
 
 
 def test_resize_never_upscales() -> None:

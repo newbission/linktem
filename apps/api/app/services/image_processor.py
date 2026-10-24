@@ -1,9 +1,9 @@
-"""스틸컷 이미지 파이프라인: ffmpeg 프레임 캡처 → Pillow 720p 리사이즈 → WebP(q75) 압축.
+"""스틸컷 이미지 파이프라인: ffmpeg 프레임 캡처 → 가장 선명한 프레임 → 확대용 + 썸네일 WebP 두 장.
 
 - 지정 시점 ±0.4초 3프레임을 캡처해 가장 선명한(엣지 분산이 큰) 프레임을 고른다.
   손떨림/모션블러가 심한 쇼츠 영상에서 품질 차이가 크다.
-- 짧은 변 720px 이하로 축소(확대는 하지 않음), WebP 품질 75 로 저장하고
-  목표 용량(기본 50KB)을 넘으면 품질을 단계적으로 낮춘다 → 30~50KB.
+- 확대용: 짧은 변 720px 이하(확대는 하지 않음), WebP q45. 목표 용량(50KB)을 넘으면 품질을 낮춘다 → 약 30KB.
+- 썸네일: 짧은 변 256px, WebP q60 → 약 10KB. 리스트 카드(84px)는 썸네일만 받아 첫 화면이 가볍다.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import asyncio
 import io
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps, ImageStat
@@ -28,6 +29,12 @@ class ImageProcessingError(RuntimeError):
     pass
 
 
+@dataclass
+class CapturedImage:
+    full: bytes
+    thumb: bytes
+
+
 class ImageProcessor:
     def __init__(self, settings: Settings, max_concurrency: int = 3) -> None:
         self._settings = settings
@@ -40,8 +47,8 @@ class ImageProcessor:
         timestamp_sec: float,
         workdir: Path,
         duration: float | None = None,
-    ) -> bytes:
-        """timestamp_sec 근처의 가장 선명한 프레임을 WebP 바이트로 반환."""
+    ) -> CapturedImage:
+        """timestamp_sec 근처의 가장 선명한 프레임을 확대용·썸네일 WebP 로 반환."""
         async with self._semaphore:
             frames: list[Path] = []
             for idx, offset in enumerate(CAPTURE_OFFSETS):
@@ -97,7 +104,7 @@ class ImageProcessor:
     # Pillow (CPU 작업 — 스레드에서 실행)
     # ------------------------------------------------------------------
 
-    def _select_and_encode(self, frames: list[Path]) -> bytes:
+    def _select_and_encode(self, frames: list[Path]) -> CapturedImage:
         best_img: Image.Image | None = None
         best_score = -1.0
         for frame in frames:
@@ -107,7 +114,11 @@ class ImageProcessor:
                 if score > best_score:
                     best_img, best_score = img.copy(), score
         assert best_img is not None
-        return self.encode_webp(best_img)
+        return CapturedImage(full=self.encode_webp(best_img), thumb=self.encode_thumb(best_img))
+
+    def encode_thumb(self, img: Image.Image) -> bytes:
+        thumb = resize_short_side(img.convert("RGB"), self._settings.image_thumb_short_side)
+        return _webp_bytes(thumb, self._settings.image_thumb_quality)
 
     def encode_webp(self, img: Image.Image) -> bytes:
         img = resize_short_side(img.convert("RGB"), self._settings.image_max_short_side)

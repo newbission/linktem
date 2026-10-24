@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # 360p 이하 video+audio → 360p 이하 단일 파일 → 최저 화질 video+audio → 최저 화질 단일 파일
 FORMAT_SELECTOR = "bv*[height<=360]+ba/b[height<=360]/wv*+wa/w"
+# 짧은 영상(쇼츠·릴스)은 확대용 스틸컷을 위해 720p 까지 (용량 부담이 작음). 없으면 위 규칙으로 내려감
+FORMAT_SELECTOR_HD = f"bv*[height<=720]+ba/b[height<=720]/{FORMAT_SELECTOR}"
 MAX_FILESIZE_BYTES = 200 * 1024 * 1024
 
 
@@ -88,7 +90,7 @@ class VideoDownloader:
         return opts
 
     async def download(self, url: str, workdir: Path) -> DownloadedVideo:
-        """메타데이터 조회 → 길이 검사 → 360p 다운로드. 동기 yt-dlp 는 스레드에서 실행."""
+        """메타데이터 조회 → 길이 검사 → 다운로드(짧은 영상 720p, 그 외 360p). 동기 yt-dlp 는 스레드에서 실행."""
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(self._download_sync, url, workdir),
@@ -124,6 +126,9 @@ class VideoDownloader:
                 if not info.get("formats") and not info.get("url"):
                     raise NoVideoError("영상이 포함되지 않은 게시글입니다.")
 
+                if meta.duration and meta.duration <= self._settings.download_hd_max_duration_sec:
+                    # 포맷 선택은 process_ie_result 에서 다시 이뤄지므로 선택기만 바꿔 끼운다
+                    ydl.format_selector = ydl.build_format_selector(FORMAT_SELECTOR_HD)
                 info = ydl.process_ie_result(info, download=True)
         except (VideoTooLongError, NoVideoError, DownloadError):
             raise

@@ -81,6 +81,8 @@ class RawItem:
     timestamp_sec: float
     retailer: str
     edition_note: str | None = None
+    reason: str | None = None
+    caution: str | None = None
     confidence: float = 0.5
 
     @classmethod
@@ -91,7 +93,9 @@ class RawItem:
             category=normalize_category(str(data.get("category") or "")),
             timestamp_sec=max(0.0, float(data.get("timestamp_sec") or 0.0)),
             retailer=normalize_retailer(str(data.get("retailer") or "")),
-            edition_note=(str(data["edition_note"]).strip() or None) if data.get("edition_note") else None,
+            edition_note=_text_or_none(data.get("edition_note")),
+            reason=_text_or_none(data.get("reason")),
+            caution=_text_or_none(data.get("caution")),
             confidence=min(1.0, max(0.0, float(data.get("confidence") if data.get("confidence") is not None else 0.5))),
         )
 
@@ -103,6 +107,8 @@ class RawItem:
             "timestamp_sec": self.timestamp_sec,
             "retailer": self.retailer,
             "edition_note": self.edition_note,
+            "reason": self.reason,
+            "caution": self.caution,
             "confidence": self.confidence,
         }
 
@@ -117,6 +123,8 @@ class ConsensusItem:
     edition_note: str | None
     votes: int
     position: int = 0
+    reason: str | None = None
+    caution: str | None = None
 
     @property
     def product_key(self) -> str:
@@ -213,6 +221,13 @@ def parse_runs(raw_runs: Iterable[Iterable[dict[str, Any]]]) -> list[list[RawIte
     return runs
 
 
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _mode(values: list[tuple[str, float]], default: str = "") -> str:
     """(값, 가중치) 리스트의 최빈값. 빈도 → 가중치 합 순으로 비교."""
     counts: dict[str, int] = defaultdict(int)
@@ -278,6 +293,9 @@ def build_consensus(
                 retailer=_mode(known_retailers, default=UNKNOWN_RETAILER),
                 timestamp_sec=round(float(statistics.median(i.timestamp_sec for i in items)), 2),
                 edition_note=_mode([(i.edition_note or "", i.confidence) for i in items]) or None,
+                # 자유 문장은 회차마다 표현이 달라 최빈값이 거의 없으므로 확신도가 가장 높은 회차의 문장
+                reason=_mode([(i.reason or "", i.confidence) for i in items]) or None,
+                caution=_mode([(i.caution or "", i.confidence) for i in items]) or None,
                 votes=votes,
             )
         )

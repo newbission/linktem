@@ -5,6 +5,8 @@ import { groupEntries, toEntries } from './grouping';
 export interface ExportOptions {
   /** 체크하지 않은 항목만 */
   remainingOnly: boolean;
+  /** 헷갈리지 말 점 / 추천 이유 메모 포함 */
+  includeNotes: boolean;
 }
 
 /**
@@ -31,6 +33,10 @@ export function formatListText(
     for (const { item } of group.entries) {
       const note = item.edition_note ? ` (${item.edition_note})` : '';
       lines.push(`${item.is_checked ? '☑' : '☐'} ${item.name_ko}${note}`);
+      if (options.includeNotes) {
+        if (item.caution) lines.push(`   ⚠️ ${item.caution}`);
+        if (item.reason) lines.push(`   💬 ${item.reason}`);
+      }
     }
   }
 

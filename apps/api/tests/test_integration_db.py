@@ -383,3 +383,33 @@ async def test_lookup_videos_does_not_count_requests(env) -> None:
     with pytest.raises(AnalysisError) as err:
         await analyzer.lookup_videos([str(UUID(int=n)) for n in range(1, 40)])
     assert err.value.status_code == 400
+
+
+async def test_thumbnails_and_notes_are_stored_and_cleaned(env) -> None:
+    """확대용·썸네일 두 장 저장 + 추천 이유/주의점 메모 → 만료 정리 시 두 장 모두 삭제."""
+    analyzer, pool, gemini, storage, downloader, settings = env
+
+    async def with_notes(url: str, run_index: int, duration: int | None = None) -> list[dict]:
+        item = raw(*GYOZA, 1.0)
+        item["reason"] = "피가 얇고 육즙이 많아 에어프라이어에 돌리기 좋음"
+        item["caution"] = "  '왕교자' 1.05kg — 일반 '물만두'와 헷갈리지 말 것  "
+        return [item, raw(*RAMEN, 2.0)]
+
+    gemini.analyze_youtube_url = with_notes  # type: ignore[method-assign]
+    first = await resolve(analyzer, URL, "client-1")
+    gyoza = next(i for i in first.items if i.name_en == GYOZA[1])
+    ramen = next(i for i in first.items if i.name_en == RAMEN[1])
+    assert gyoza.reason == "피가 얇고 육즙이 많아 에어프라이어에 돌리기 좋음"
+    assert gyoza.caution == "'왕교자' 1.05kg — 일반 '물만두'와 헷갈리지 말 것"
+    assert ramen.reason is None and ramen.caution is None
+
+    for item in first.items:
+        assert item.image_url.endswith(".webp") and not item.image_url.endswith("_t.webp")
+        assert item.thumb_url == item.image_url[: -len(".webp")] + "_t.webp"
+    assert len(storage.objects) == 2 * len(first.items), "확대용 + 썸네일"
+
+    async with pool.acquire() as conn:
+        await conn.execute("update videos set last_requested_at = now() - interval '60 days'")
+    result = await cleanup_expired_images(storage, pool, settings)  # type: ignore[arg-type]
+    assert result["expired_images"] == len(first.items)
+    assert storage.objects == {}, "썸네일도 함께 삭제"

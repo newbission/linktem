@@ -48,6 +48,9 @@ class ShoppingItem(BaseModel):
     retailer: str
     is_checked: bool = False
     edition_note: Optional[str] = None
+    thumb_url: Optional[str] = None
+    reason: Optional[str] = None
+    caution: Optional[str] = None
 
 
 class VideoAnalysisResponse(BaseModel):

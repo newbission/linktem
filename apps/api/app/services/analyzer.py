@@ -52,7 +52,15 @@ from app.services.ensemble import (
 )
 from app.services.gemini import GeminiAnalyzer, GeminiError
 from app.services.image_processor import ImageProcessor
-from app.services.storage import MediaStorage, StorageError, UploadedImage, build_image_key, superseded_expiry
+from app.services.storage import (
+    MediaStorage,
+    StorageError,
+    UploadedImage,
+    build_image_key,
+    delete_images,
+    superseded_expiry,
+    upload_capture,
+)
 from app.services.url_utils import UnsupportedUrlError, VideoTarget, normalize_video_url
 
 logger = logging.getLogger(__name__)
@@ -297,12 +305,12 @@ class Analyzer:
                     for item, upload in zip(consensus, uploads):
                         await self._insert_consensus_item(conn, video_id, item, upload)
         except Exception:
-            await self._storage.delete_keys(uploaded_keys)
+            await delete_images(self._storage, uploaded_keys)
             raise
 
         if video is None:
             # 다른 인스턴스/요청이 먼저 저장함 → 업로드한 이미지는 버리고 기존 영상으로
-            await self._storage.delete_keys(uploaded_keys)
+            await delete_images(self._storage, uploaded_keys)
             async with pool.acquire() as conn:
                 existing = await repo.get_video_by_key(conn, target.canonical_key)
             assert existing is not None
@@ -400,7 +408,7 @@ class Analyzer:
                     for item, upload in zip(items, uploads):
                         if upload is None:
                             continue
-                        await repo.set_item_image(conn, item["id"], upload.key, upload.url)
+                        await repo.set_item_image(conn, item["id"], upload.key, upload.url, upload.thumb_url)
                         await repo.log_image_event(
                             conn,
                             r2_key=upload.key,
@@ -468,11 +476,13 @@ class Analyzer:
                         retailer=c.retailer,
                         timestamp_sec=c.timestamp_sec,
                         edition_note=c.edition_note,
+                        reason=c.reason,
+                        caution=c.caution,
                         vote_count=c.votes,
                         position=c.position,
                     )
                     if upload is not None:
-                        await repo.set_item_image(conn, row["id"], upload.key, upload.url)
+                        await repo.set_item_image(conn, row["id"], upload.key, upload.url, upload.thumb_url)
                         await repo.log_image_event(
                             conn,
                             r2_key=upload.key,
@@ -503,7 +513,7 @@ class Analyzer:
                         )
                 await repo.delete_items(conn, [row["id"] for row in removed])
         except Exception:
-            await self._storage.delete_keys([u.key for u in uploads if u])
+            await delete_images(self._storage, [u.key for u in uploads if u])
             raise
 
     def _plan_sync(
@@ -546,7 +556,10 @@ class Analyzer:
             timestamp_sec=item.timestamp_sec,
             image_key=upload.key if upload else "",
             image_url=upload.url if upload else "",
+            thumb_url=upload.thumb_url if upload else "",
             edition_note=item.edition_note,
+            reason=item.reason,
+            caution=item.caution,
             vote_count=item.votes,
             position=item.position,
         )
@@ -611,11 +624,11 @@ class Analyzer:
 
         async def _one(ts: float) -> UploadedImage | None:
             try:
-                data = await self._images.capture_webp(downloaded.path, ts, workdir, duration)
+                captured = await self._images.capture_webp(downloaded.path, ts, workdir, duration)
                 if not self._storage.enabled:
                     logger.warning("스틸컷 저장소 미설정 — 업로드 생략")
                     return None
-                return await self._storage.upload_webp(build_image_key(video_id), data)
+                return await upload_capture(self._storage, build_image_key(video_id), captured.full, captured.thumb)
             except (StorageError, RuntimeError) as exc:
                 logger.warning("capture/upload failed at %.2fs: %s", ts, exc)
                 return None
@@ -656,6 +669,10 @@ class Analyzer:
                     category=r["category"],
                     timestamp_sec=float(r["timestamp_sec"]),
                     image_url=r["image_url"],
+                    # 썸네일 도입 전 캡처는 확대용 이미지로 대체
+                    thumb_url=r["thumb_url"] or r["image_url"],
+                    reason=r["reason"],
+                    caution=r["caution"],
                     retailer=r["retailer"],
                     is_checked=False,
                     edition_note=r["edition_note"],

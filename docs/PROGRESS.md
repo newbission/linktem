@@ -75,7 +75,7 @@
 
 - [x] git 저장소 초기화 + 첫 커밋 (2026-10-23)
 - [ ] GitHub private 저장소 생성 + push
-- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql` 실행 → Pooler URL 확보
+- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql`, `004_item_details.sql` 실행 → Pooler URL 확보
 - [ ] Cloudflare R2 버킷 `linktem` + 공개 도메인 + CORS (PROJECT_SPEC §6) + API 토큰
 - [ ] Render: `render.yaml` Blueprint 로 서비스 생성, `sync: false` 환경변수 입력, 첫 배포에서 `docker build` 확인
 - [ ] UptimeRobot: `https://<api>/health` 5분 간격
@@ -194,6 +194,16 @@
 - 화면: 분석 중 리스트 잠금 제거, '내 분석 영상'(진행 중·실패·완료 영상 목록) 추가.
 - 속도: `GEMINI_THINKING_LEVEL=low`, `GEMINI_MEDIA_RESOLUTION=low` (모델이 거부하면 기본 설정으로 자동 재시도).
   같은 인스타 영상(4.9MB, 상품 19개) 기준 Gemini 응답 124초 → 86초.
+
+### ADR-015. 스틸컷 확대 보기(확대용 720p + 썸네일 256p) + 상품 메모(추천 이유·헷갈리지 말 점)
+- 이미지: 가장 선명한 프레임 하나로 확대용(짧은 변 720px, WebP q45 ≈30KB)과 썸네일(256px, q60 ≈10KB)을 만든다.
+  썸네일 키는 `{image_key}_t.webp` 로 파생(별도 키 컬럼 없음), URL 은 `video_items.thumb_url`. 삭제는 `delete_images()` 가 두 장을 함께 지운다.
+  리스트 카드는 썸네일만 받아 첫 화면이 가볍고, 확대 보기에서만 720p 를 받는다. 썸네일 도입 전 캡처는 image_url 로 대체.
+- 다운로드: `DOWNLOAD_HD_MAX_DURATION_SEC`(기본 180초) 이하 영상은 720p, 그 외 360p (실측: 3분 33초 영상 720p 21MB / 360p 9.1MB).
+- 메모: Gemini 스키마에 `reason`(영상에서 말한 추천 이유), `caution`(비슷한 제품과 헷갈리지 않도록 확인할 점) 추가.
+  근거가 없으면 null(지어내지 않도록 프롬프트에 명시), 120자 제한. 앙상블에서는 최빈값(대개 확신도가 가장 높은 회차의 문장).
+  `video_items.reason / caution` (004 마이그레이션). 카드·확대 보기·내보내기 텍스트(옵션)에 표시.
+- 기존에 분석된 영상은 다음 앙상블 회차부터 메모가 채워지고, 썸네일은 새로 캡처되는 이미지부터 생긴다.
 
 ## 환경변수 템플릿
 

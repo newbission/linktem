@@ -18,6 +18,7 @@ interface Props {
   onToggle: (itemId: string) => void;
   onFeedback: (itemId: string, type: FeedbackType | null) => void;
   onOpenRelated: (url: string) => void;
+  onOpenImage: (itemId: string) => void;
   onRemoveVideo: (videoId: string) => void;
 }
 
@@ -36,6 +37,7 @@ export function ShoppingList({
   onToggle,
   onFeedback,
   onOpenRelated,
+  onOpenImage,
   onRemoveVideo,
 }: Props) {
   const groups = groupEntries(entries, tab);
@@ -104,6 +106,7 @@ export function ShoppingList({
                   onToggle={onToggle}
                   onFeedback={onFeedback}
                   onOpenRelated={onOpenRelated}
+                  onOpenImage={onOpenImage}
                 />
               ))}
             </ul>

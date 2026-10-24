@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalysisJob, FeedbackType, RelatedVideo, VideoAnalysisResponse } from '@linktem/types';
 
 import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, waitForServer } from '@/lib/api';
-import { toEntries, type FilterTab } from '@/lib/grouping';
+import { groupEntries, toEntries, type FilterTab } from '@/lib/grouping';
 import { canonicalVideoKey } from '@/lib/share';
 import { isActiveJob, useJobPolling } from '@/lib/use-job-polling';
 import { useOfflineImages, useOnlineStatus, useShoppingList } from '@/lib/use-shopping-list';
@@ -18,6 +18,7 @@ import { ExportListPanel } from './ExportListPanel';
 import { FilterTabs } from './FilterTabs';
 import { Footer } from './Footer';
 import { Header } from './Header';
+import { ImageViewer } from './ImageViewer';
 import { ListSummary } from './ListSummary';
 import { MyVideos } from './MyVideos';
 import { OfflineSaveButton } from './OfflineSaveButton';
@@ -62,6 +63,8 @@ export function HomeClient() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [related, setRelated] = useState<Record<string, RelatedVideo[]>>({});
+  // 확대 보기 중인 항목의 item.id (목록 순서가 바뀌어도 같은 상품을 유지)
+  const [viewerItemId, setViewerItemId] = useState<string | null>(null);
   const submittingRef = useRef(false);
   const listTopRef = useRef<HTMLDivElement>(null);
   const myVideosRef = useRef<HTMLDivElement>(null);
@@ -69,6 +72,12 @@ export function HomeClient() {
   const entries = useMemo(() => toEntries(list.videos, list.checked), [list.videos, list.checked]);
   const imageUrls = useMemo(() => entries.map((e) => e.item.image_url).filter(Boolean), [entries]);
   const imageMap = useOfflineImages(imageUrls, offlineSavedAt);
+  // 확대 보기 넘기기 순서 = 지금 탭에서 보이는 순서 (이미지가 있는 항목만)
+  const viewerEntries = useMemo(
+    () => groupEntries(entries, tab).flatMap((g) => g.entries).filter((e) => e.item.image_url || e.item.thumb_url),
+    [entries, tab],
+  );
+  const viewerIndex = viewerItemId ? viewerEntries.findIndex((e) => e.item.id === viewerItemId) : -1;
 
   useEffect(() => {
     if (!notice) return;
@@ -338,6 +347,7 @@ export function HomeClient() {
               onToggle={toggleChecked}
               onFeedback={handleFeedback}
               onOpenRelated={analyze}
+              onOpenImage={setViewerItemId}
               onRemoveVideo={removeVideo}
             />
           </div>
@@ -347,6 +357,17 @@ export function HomeClient() {
       </main>
 
       <Footer />
+
+      {viewerIndex >= 0 && (
+        <ImageViewer
+          entries={viewerEntries}
+          index={viewerIndex}
+          imageMap={imageMap}
+          online={online}
+          onIndexChange={(i) => setViewerItemId(viewerEntries[i]?.item.id ?? null)}
+          onClose={() => setViewerItemId(null)}
+        />
+      )}
 
       {notice && (
         <div

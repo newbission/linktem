@@ -158,7 +158,7 @@ async def list_items(conn: asyncpg.Connection, video_id: UUID, *, include_hidden
     return await conn.fetch(
         f"""
         select vi.id, vi.video_id, vi.product_id, vi.timestamp_sec::float8 as timestamp_sec, vi.image_key,
-               vi.image_url, vi.edition_note, vi.vote_count, vi.same_count, vi.different_count, vi.is_hidden,
+               vi.image_url, vi.thumb_url, vi.reason, vi.caution, vi.edition_note, vi.vote_count, vi.same_count, vi.different_count, vi.is_hidden,
                vi.position, vi.retailer, p.normalized_key, p.name_ko, p.name_en, p.category
           from video_items vi
           join products p on p.id = vi.product_id
@@ -196,21 +196,27 @@ async def upsert_item(
     timestamp_sec: float,
     image_key: str,
     image_url: str,
+    thumb_url: str,
     edition_note: str | None,
+    reason: str | None,
+    caution: str | None,
     vote_count: int,
     position: int,
 ) -> UUID:
     return await conn.fetchval(
         """
-        insert into video_items (video_id, product_id, retailer, timestamp_sec, image_key, image_url, edition_note,
-                                 vote_count, position)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        insert into video_items (video_id, product_id, retailer, timestamp_sec, image_key, image_url, thumb_url,
+                                 edition_note, reason, caution, vote_count, position)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         on conflict (video_id, product_id) do update
            set retailer = excluded.retailer,
                timestamp_sec = excluded.timestamp_sec,
                image_key = case when excluded.image_key <> '' then excluded.image_key else video_items.image_key end,
-               image_url = case when excluded.image_url <> '' then excluded.image_url else video_items.image_url end,
+               image_url = case when excluded.image_key <> '' then excluded.image_url else video_items.image_url end,
+               thumb_url = case when excluded.image_key <> '' then excluded.thumb_url else video_items.thumb_url end,
                edition_note = excluded.edition_note,
+               reason = excluded.reason,
+               caution = excluded.caution,
                vote_count = excluded.vote_count,
                position = excluded.position
         returning id
@@ -221,7 +227,10 @@ async def upsert_item(
         timestamp_sec,
         image_key,
         image_url,
+        thumb_url,
         edition_note,
+        reason,
+        caution,
         vote_count,
         position,
     )
@@ -234,27 +243,38 @@ async def update_item(
     retailer: str,
     timestamp_sec: float,
     edition_note: str | None,
+    reason: str | None,
+    caution: str | None,
     vote_count: int,
     position: int,
 ) -> None:
     await conn.execute(
         """
         update video_items
-           set retailer = $2, timestamp_sec = $3, edition_note = $4, vote_count = $5, position = $6
+           set retailer = $2, timestamp_sec = $3, edition_note = $4, reason = $5, caution = $6,
+               vote_count = $7, position = $8
          where id = $1
         """,
         item_id,
         retailer,
         timestamp_sec,
         edition_note,
+        reason,
+        caution,
         vote_count,
         position,
     )
 
 
-async def set_item_image(conn: asyncpg.Connection, item_id: UUID, image_key: str, image_url: str) -> None:
+async def set_item_image(
+    conn: asyncpg.Connection, item_id: UUID, image_key: str, image_url: str, thumb_url: str
+) -> None:
     await conn.execute(
-        "update video_items set image_key = $2, image_url = $3 where id = $1", item_id, image_key, image_url
+        "update video_items set image_key = $2, image_url = $3, thumb_url = $4 where id = $1",
+        item_id,
+        image_key,
+        image_url,
+        thumb_url,
     )
 
 
@@ -265,7 +285,7 @@ async def clear_video_images(conn: asyncpg.Connection, video_id: UUID) -> list[a
         with old as (
             select id, image_key from video_items where video_id = $1 and image_key <> '' for update
         )
-        update video_items vi set image_key = '', image_url = ''
+        update video_items vi set image_key = '', image_url = '', thumb_url = ''
           from old where vi.id = old.id
         returning old.id, old.image_key
         """,

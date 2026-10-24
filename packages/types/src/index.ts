@@ -28,14 +28,20 @@ export interface ShoppingItem {
   category: string;
   /** 영상 내 상품이 가장 잘 보이는 시점 (초) */
   timestamp_sec: number;
-  /** 해당 시점 스틸컷 WebP 공개 URL (Cloudflare R2). 이미지 만료/복원 중이면 빈 문자열 */
+  /** 해당 시점 스틸컷 WebP 공개 URL — 확대 보기용 (짧은 변 720px). 이미지 만료/복원 중이면 빈 문자열 */
   image_url: string;
+  /** 리스트 카드용 썸네일 (짧은 변 256px). 없거나 빈 문자열이면 image_url 사용 */
+  thumb_url?: string;
   /** 판매처 (예: "이마트", "코스트코", "다이소") */
   retailer: string;
   /** 체크 여부 — 서버는 항상 false 로 내려주고, 클라이언트가 로컬 상태로 관리 */
   is_checked: boolean;
   /** 한정판 / 용량 / 맛 등 에디션 메모 */
   edition_note?: string;
+  /** 영상에서 말한 추천 이유·특징 (AI 요약) */
+  reason?: string;
+  /** 비슷한 제품과 헷갈리지 않도록 확인할 점 (AI 요약) */
+  caution?: string;
 }
 
 /** POST /api/analyze 응답 본문 */

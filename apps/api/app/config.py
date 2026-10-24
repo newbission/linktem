@@ -38,15 +38,21 @@ class Settings(BaseSettings):
     # --- yt-dlp ---
     max_video_duration_sec: int = 1200
     download_timeout_sec: int = 180
+    # 이 길이 이하 영상은 720p 로 받아 확대용 스틸컷 화질 확보 (긴 영상은 360p — 용량/시간 절약)
+    download_hd_max_duration_sec: int = 180
     ytdlp_proxy: str = ""
     # Netscape cookies.txt 를 base64 로 인코딩한 값 (인스타그램 로그인 필요 게시물 대응)
     ytdlp_cookies_b64: str = ""
 
     # --- 이미지 ---
+    # 확대용: 짧은 변 720px, WebP q45 (실측: 작은 성분표 글씨까지 판독, 약 30KB)
     image_max_short_side: int = 720
-    image_webp_quality: int = 75
+    image_webp_quality: int = 45
     image_target_max_bytes: int = 50 * 1024
-    image_min_quality: int = 45
+    image_min_quality: int = 35
+    # 리스트 카드 썸네일: 화면 84px(3배율 기기 약 250px) → 짧은 변 256px, q60 (약 10KB)
+    image_thumb_short_side: int = 256
+    image_thumb_quality: int = 60
 
     # --- 스틸컷 저장소 ---
     # auto: R2 자격 증명이 있으면 r2, 없으면 local / local: 디스크 / r2: Cloudflare R2

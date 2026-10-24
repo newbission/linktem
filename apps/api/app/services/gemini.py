@@ -24,6 +24,8 @@ from app.schemas import SHOPPING_CATEGORIES
 logger = logging.getLogger(__name__)
 
 MAX_ITEMS = 30
+# 메모는 카드에 한두 줄로 보여주므로 길게 받지 않는다
+MAX_NOTE_CHARS = 120
 
 RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
@@ -56,6 +58,23 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                         "nullable": True,
                         "description": "용량/맛/한정판/색상 등 같은 제품 내 구분 정보. 없으면 null",
                     },
+                    "reason": {
+                        "type": "STRING",
+                        "nullable": True,
+                        "description": (
+                            "영상에서 말한 추천 이유·특징·사용 후기를 한 문장(60자 이내)으로 요약. "
+                            "예: '물만 부으면 되고 국물이 진해서 캠핑용으로 최고'. 언급이 없으면 null (지어내지 말 것)"
+                        ),
+                    },
+                    "caution": {
+                        "type": "STRING",
+                        "nullable": True,
+                        "description": (
+                            "비슷한 제품과 헷갈리지 않도록 살 때 확인할 점 한 문장(60자 이내). "
+                            "화자가 강조한 내용이나 포장으로 구별되는 점. "
+                            "예: '빨간 뚜껑 오리지널 (매운맛 아님)', '1kg 대용량만 이 가격'. 없으면 null"
+                        ),
+                    },
                     "confidence": {
                         "type": "NUMBER",
                         "description": "제품 식별 확신도 0.0~1.0",
@@ -69,6 +88,8 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                     "timestamp_sec",
                     "retailer",
                     "edition_note",
+                    "reason",
+                    "caution",
                     "confidence",
                 ],
             },
@@ -86,7 +107,10 @@ SYSTEM_INSTRUCTION = """당신은 한국 SNS 쇼핑 영상(장보기 하울, 살
 3. 브랜드와 제품명은 포장에 적힌 그대로 적습니다. 확실하지 않으면 보이는 만큼만 적고 confidence 를 낮춥니다.
 4. retailer 는 매장 간판, 장바구니/봉투 로고, 가격표 양식, 화자의 말("코스트코에서 산")로 판단합니다. 근거가 없으면 '기타/미상' 입니다.
 5. 최대 30개까지, 영상 등장 순서대로 나열합니다.
-6. 상품이 하나도 없으면 빈 배열을 반환합니다."""
+6. reason 은 화자가 실제로 말하거나 자막에 나온 추천 이유만 요약합니다. 근거가 없으면 null 입니다.
+7. caution 은 "이 제품이어야 하는 이유", "다른 제품과 헷갈리면 안 되는 점"(맛·용량·색상·버전·매장 전용 등)을 적습니다.
+   화자가 강조했거나 포장으로 분명히 구별될 때만 적고, 일반적인 주의사항은 적지 않습니다.
+8. 상품이 하나도 없으면 빈 배열을 반환합니다."""
 
 
 class GeminiItem(BaseModel):
@@ -96,6 +120,8 @@ class GeminiItem(BaseModel):
     timestamp_sec: float = 0.0
     retailer: str = "기타/미상"
     edition_note: str | None = None
+    reason: str | None = None
+    caution: str | None = None
     confidence: float = 0.5
 
 
@@ -243,6 +269,8 @@ class GeminiAnalyzer:
                     "timestamp_sec": round(ts, 2),
                     "retailer": item.retailer.strip() or "기타/미상",
                     "edition_note": (item.edition_note or "").strip() or None,
+                    "reason": _clip_note(item.reason),
+                    "caution": _clip_note(item.caution),
                     "confidence": round(min(1.0, max(0.0, float(item.confidence))), 3),
                 }
             )
@@ -252,3 +280,10 @@ class GeminiAnalyzer:
 def _mentions_tuning(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(word in text for word in ("thinking", "media_resolution", "media resolution"))
+
+
+def _clip_note(value: str | None) -> str | None:
+    text = " ".join((value or "").split())
+    if not text:
+        return None
+    return text if len(text) <= MAX_NOTE_CHARS else text[: MAX_NOTE_CHARS - 1].rstrip() + "…"

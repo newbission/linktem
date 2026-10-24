@@ -14,7 +14,7 @@ interface Props {
 /** 리스트를 텍스트로 복사하거나 다른 앱(카카오톡·메모 등)으로 공유 */
 export function ExportListPanel({ list, onNotice }: Props) {
   const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<ExportOptions>({ remainingOnly: false });
+  const [options, setOptions] = useState<ExportOptions>({ remainingOnly: false, includeNotes: true });
   const [canShare, setCanShare] = useState(false);
 
   useEffect(() => {
@@ -91,6 +91,15 @@ export function ExportListPanel({ list, onNotice }: Props) {
                 className="h-4 w-4 accent-brand-600"
               />
               남은 항목만
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={options.includeNotes}
+                onChange={() => toggle('includeNotes')}
+                className="h-4 w-4 accent-brand-600"
+              />
+              메모 포함 (헷갈리지 말 점·추천 이유)
             </label>
           </div>
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-700">

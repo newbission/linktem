@@ -42,6 +42,8 @@ class UploadedImage:
     key: str
     url: str
     size_bytes: int
+    # 리스트 카드용 썸네일 (키는 thumb_key(key) 로 파생되므로 DB 에는 URL 만 저장)
+    thumb_url: str = ""
 
 
 class MediaStorage(Protocol):
@@ -55,6 +57,32 @@ class MediaStorage(Protocol):
 
 def build_image_key(video_id: UUID | str) -> str:
     return f"captures/{video_id}/{uuid.uuid4().hex}.webp"
+
+
+def thumb_key(image_key: str) -> str:
+    """확대용 이미지 키 → 썸네일 키 (captures/<video>/<id>.webp → captures/<video>/<id>_t.webp)."""
+    return f"{image_key[: -len('.webp')]}_t.webp" if image_key.endswith(".webp") else f"{image_key}_t"
+
+
+async def upload_capture(storage: MediaStorage, key: str, full: bytes, thumb: bytes) -> UploadedImage:
+    """확대용 + 썸네일 업로드. 썸네일 업로드가 실패하면 확대용도 지워 반쪽 상태를 남기지 않는다."""
+    uploaded = await storage.upload_webp(key, full)
+    try:
+        small = await storage.upload_webp(thumb_key(key), thumb)
+    except StorageError:
+        await storage.delete_keys([key])
+        raise
+    return UploadedImage(key=uploaded.key, url=uploaded.url, size_bytes=uploaded.size_bytes + small.size_bytes,
+                         thumb_url=small.url)
+
+
+async def delete_images(storage: MediaStorage, image_keys: Sequence[str]) -> int:
+    """확대용 이미지와 파생 썸네일을 함께 삭제. 반환값은 이미지(확대용) 기준 개수."""
+    keys = [k for k in dict.fromkeys(image_keys) if k]
+    if not keys:
+        return 0
+    await storage.delete_keys([*keys, *(thumb_key(k) for k in keys)])
+    return len(keys)
 
 
 def create_storage(settings: Settings) -> "R2Storage | LocalStorage":
@@ -216,7 +244,7 @@ async def cleanup_expired_images(storage: MediaStorage, pool: asyncpg.Pool, sett
     async with pool.acquire() as conn:
         due = await repo.due_superseded_images(conn)
     if due:
-        superseded_deleted = await storage.delete_keys([r["r2_key"] for r in due])
+        superseded_deleted = await delete_images(storage, [r["r2_key"] for r in due])
         async with pool.acquire() as conn, conn.transaction():
             await repo.mark_logs_processed(conn, [r["id"] for r in due])
             for r in due:
@@ -242,7 +270,7 @@ async def cleanup_expired_images(storage: MediaStorage, pool: asyncpg.Pool, sett
                     conn, r2_key=r["image_key"], event="EXPIRED", video_id=video_id, item_id=r["id"], processed=True
                 )
         # DB 참조를 먼저 끊은 뒤 삭제 → 삭제 실패 시에도 깨진 URL 이 응답에 노출되지 않음
-        expired_images += await storage.delete_keys([r["image_key"] for r in cleared])
+        expired_images += await delete_images(storage, [r["image_key"] for r in cleared])
         expired_videos += 1
 
     async with pool.acquire() as conn:

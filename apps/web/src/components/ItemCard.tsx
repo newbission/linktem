@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Clapperboard, ImageOff, Play, ThumbsDown, Undo2 } from 'lucide-react';
+import { Check, Clapperboard, ImageOff, MessageSquareQuote, Play, ThumbsDown, TriangleAlert, Undo2, ZoomIn } from 'lucide-react';
 import { useState } from 'react';
 
 import type { FeedbackType, RelatedVideo, ShoppingItem, VideoAnalysisResponse } from '@linktem/types';
@@ -18,6 +18,8 @@ interface Props {
   onToggle: (itemId: string) => void;
   onFeedback: (itemId: string, type: FeedbackType | null) => void;
   onOpenRelated: (url: string) => void;
+  /** 스틸컷을 누르면 확대 보기 */
+  onOpenImage: (itemId: string) => void;
 }
 
 export function ItemCard({
@@ -31,10 +33,13 @@ export function ItemCard({
   onToggle,
   onFeedback,
   onOpenRelated,
+  onOpenImage,
 }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const checked = item.is_checked;
-  const src = imageSrc ?? item.image_url;
+  // 오프라인 저장본 → 썸네일 → (썸네일 도입 전 캡처) 확대용 이미지
+  const src = imageSrc ?? (item.thumb_url || item.image_url);
+  const canZoom = Boolean(src) && !imageFailed;
   const sceneUrl = timestampUrl(video.source_url, item.timestamp_sec);
   const markedDifferent = feedback === 'DIFFERENT';
 
@@ -61,15 +66,25 @@ export function ItemCard({
 
         {/* 스틸컷 */}
         <div className="relative h-[84px] w-[84px] shrink-0 overflow-hidden rounded-xl bg-slate-100">
-          {src && !imageFailed ? (
-            <img
-              src={src}
-              alt={`${item.name_ko} 영상 스틸컷`}
-              loading="lazy"
-              decoding="async"
-              onError={() => setImageFailed(true)}
-              className={`h-full w-full object-cover ${checked ? 'grayscale' : ''}`}
-            />
+          {canZoom ? (
+            <button
+              type="button"
+              onClick={() => onOpenImage(item.id)}
+              className="group block h-full w-full"
+              aria-label={`${item.name_ko} 스틸컷 크게 보기`}
+            >
+              <img
+                src={src}
+                alt={`${item.name_ko} 영상 스틸컷`}
+                loading="lazy"
+                decoding="async"
+                onError={() => setImageFailed(true)}
+                className={`h-full w-full object-cover ${checked ? 'grayscale' : ''}`}
+              />
+              <span className="absolute left-1 top-1 rounded-md bg-black/50 p-0.5 text-white opacity-80 group-active:opacity-100">
+                <ZoomIn size={11} aria-hidden />
+              </span>
+            </button>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-slate-400">
               <ImageOff size={20} aria-hidden />
@@ -101,6 +116,7 @@ export function ItemCard({
           </p>
           <p className="mt-0.5 truncate text-xs text-slate-500">{item.name_en}</p>
           {item.edition_note && <p className="mt-1 text-xs font-medium text-brand-700">{item.edition_note}</p>}
+          <ItemNotes reason={item.reason} caution={item.caution} />
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
             <span
               className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ${retailerStyle(item.retailer)}`}
@@ -169,5 +185,33 @@ export function ItemCard({
         </div>
       )}
     </li>
+  );
+}
+
+/** 영상에서 말한 추천 이유 / 헷갈리지 말아야 할 점 (AI 요약) */
+export function ItemNotes({ reason, caution, large = false }: { reason?: string | null; caution?: string | null; large?: boolean }) {
+  if (!reason && !caution) return null;
+  const text = large ? 'text-sm' : 'text-xs';
+  return (
+    <div className="mt-1.5 space-y-1">
+      {caution && (
+        <p className={`flex items-start gap-1 rounded-lg bg-amber-50 px-2 py-1 ${text} font-medium leading-snug text-amber-900`}>
+          <TriangleAlert size={large ? 14 : 12} className="mt-0.5 shrink-0 text-amber-600" aria-hidden />
+          <span>
+            <span className="sr-only">헷갈리지 마세요: </span>
+            {caution}
+          </span>
+        </p>
+      )}
+      {reason && (
+        <p className={`flex items-start gap-1 ${text} leading-snug text-slate-600`}>
+          <MessageSquareQuote size={large ? 14 : 12} className="mt-0.5 shrink-0 text-slate-400" aria-hidden />
+          <span>
+            <span className="sr-only">추천 이유: </span>
+            {reason}
+          </span>
+        </p>
+      )}
+    </div>
   );
 }
