@@ -17,13 +17,15 @@ interface Props {
   index: number;
   /** image_url → 오프라인 저장본 object URL */
   imageMap: Record<string, string>;
+  /** 체크리스트 번호 */
+  numbers: Record<string, number>;
   online: boolean;
   onIndexChange: (index: number) => void;
   onClose: () => void;
 }
 
 /** 스틸컷 확대 보기: 확대용 이미지(짧은 변 720px) + 상품 정보·메모. 좌우 넘기기, 두 번 탭해 확대 */
-export function ImageViewer({ entries, index, imageMap, online, onIndexChange, onClose }: Props) {
+export function ImageViewer({ entries, index, imageMap, numbers, online, onIndexChange, onClose }: Props) {
   const entry = entries[index];
   const [zoom, setZoom] = useState<{ x: number; y: number } | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -211,7 +213,14 @@ export function ImageViewer({ entries, index, imageMap, online, onIndexChange, o
       <div className="max-h-[38vh] overflow-y-auto rounded-t-3xl bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-slate-900">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-base font-extrabold leading-snug">{item.name_ko}</p>
+            <p className="text-base font-extrabold leading-snug">
+              {numbers[item.id] !== undefined && (
+                <span className="mr-1.5 inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-slate-900 px-1 align-middle text-xs font-extrabold text-white">
+                  {numbers[item.id]}
+                </span>
+              )}
+              {item.name_ko}
+            </p>
             <p className="mt-0.5 truncate text-xs text-slate-500">{item.name_en}</p>
           </div>
           <span

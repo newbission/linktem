@@ -116,23 +116,44 @@ export interface VideoLookupResponse {
 // 피드백
 // ---------------------------------------------------------------------------
 
-export type FeedbackType = 'SAME' | 'DIFFERENT';
+/**
+ * 제보 유형
+ * - SAME: 이 제품이 맞아요 (WRONG_PRODUCT·NOT_IN_VIDEO 와 배타적인 '제품 판정' 표)
+ * - WRONG_PRODUCT: 다른 제품이에요 / NOT_IN_VIDEO: 영상에 없는 제품이에요 → 여러 명이면 리스트에서 숨김
+ * - WRONG_IMAGE: 사진이 달라요 → 여러 명이면 사진을 다시 고름
+ * - WRONG_RETAILER: 판매처가 달라요 / WRONG_DETAIL: 용량·맛·메모가 달라요 / DUPLICATE: 중복이에요 → 검수용 기록
+ */
+export type FeedbackType =
+  | 'SAME'
+  | 'WRONG_PRODUCT'
+  | 'NOT_IN_VIDEO'
+  | 'WRONG_IMAGE'
+  | 'WRONG_RETAILER'
+  | 'WRONG_DETAIL'
+  | 'DUPLICATE';
 
 /** POST /api/feedback 요청 본문 */
 export interface UserFeedbackRequest {
   /** ShoppingItem.id */
   item_id: string;
-  /** SAME: 영상 속 제품이 맞아요 / DIFFERENT: 다른 제품이에요 */
   feedback_type: FeedbackType;
+  /** true 면 이 유형의 내 제보를 취소 */
+  cancel?: boolean;
 }
 
 /** POST /api/feedback 응답 본문 */
 export interface UserFeedbackResponse {
   item_id: string;
+  /** '이 제품이 맞아요' 수 */
   same_count: number;
+  /** '다른 제품이에요' + '영상에 없는 제품이에요' 수 */
   different_count: number;
   /** 피드백 임계치 초과로 리스트에서 숨겨졌는지 여부 */
   is_hidden: boolean;
+  /** 유형별 제보 수 (key: FeedbackType) */
+  report_counts: Record<string, number>;
+  /** '사진이 달라요' 제보가 모여 사진을 내리고 다시 고르는 중인지 */
+  image_reset: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,4 +204,12 @@ export const SHOPPING_CATEGORIES = [
 
 export type ShoppingCategory = (typeof SHOPPING_CATEGORIES)[number];
 
-export const FEEDBACK_TYPES: readonly FeedbackType[] = ['SAME', 'DIFFERENT'] as const;
+export const FEEDBACK_TYPES: readonly FeedbackType[] = [
+  'SAME',
+  'WRONG_PRODUCT',
+  'NOT_IN_VIDEO',
+  'WRONG_IMAGE',
+  'WRONG_RETAILER',
+  'WRONG_DETAIL',
+  'DUPLICATE',
+] as const;

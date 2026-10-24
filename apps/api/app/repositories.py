@@ -304,39 +304,88 @@ async def delete_items(conn: asyncpg.Connection, item_ids: Sequence[UUID]) -> No
 
 
 async def upsert_feedback(
-    conn: asyncpg.Connection, item_id: UUID, feedback_type: str, client_hash: str, hide_threshold: int
+    conn: asyncpg.Connection,
+    item_id: UUID,
+    feedback_type: str,
+    client_hash: str,
+    hide_threshold: int,
+    *,
+    cancel: bool = False,
 ) -> asyncpg.Record | None:
-    """1인 1표 피드백 반영 후 집계/숨김 상태를 반환. 아이템이 없으면 None. 트랜잭션 안에서 호출."""
+    """제보 반영(또는 취소) 후 집계/숨김 상태를 반환. 아이템이 없으면 None. 트랜잭션 안에서 호출.
+
+    '제품 판정'(SAME / WRONG_PRODUCT / NOT_IN_VIDEO)은 1인 1표, 나머지 유형은 유형마다 1인 1건.
+    """
     exists = await conn.fetchval("select 1 from video_items where id = $1 for update", item_id)
     if not exists:
         return None
-    await conn.execute(
-        """
-        insert into user_feedback (video_item_id, feedback_type, client_hash)
-        values ($1, $2, $3)
-        on conflict (video_item_id, client_hash) do update set feedback_type = excluded.feedback_type
-        """,
-        item_id,
-        feedback_type,
-        client_hash,
-    )
+    if cancel:
+        await conn.execute(
+            "delete from user_feedback where video_item_id = $1 and client_hash = $2 and feedback_type = $3",
+            item_id,
+            client_hash,
+            feedback_type,
+        )
+    else:
+        await conn.execute(
+            """
+            insert into user_feedback (video_item_id, feedback_type, client_hash)
+            values ($1, $2, $3)
+            on conflict (video_item_id, client_hash, report_group) do update set feedback_type = excluded.feedback_type
+            """,
+            item_id,
+            feedback_type,
+            client_hash,
+        )
+    return await refresh_feedback_counts(conn, item_id, hide_threshold)
+
+
+async def refresh_feedback_counts(conn: asyncpg.Connection, item_id: UUID, hide_threshold: int) -> asyncpg.Record:
     return await conn.fetchrow(
         """
         with agg as (
-            select count(*) filter (where feedback_type = 'SAME')      as same_count,
-                   count(*) filter (where feedback_type = 'DIFFERENT') as different_count
+            select count(*) filter (where feedback_type = 'SAME') as same_count,
+                   count(*) filter (where feedback_type in ('WRONG_PRODUCT', 'NOT_IN_VIDEO')) as different_count,
+                   coalesce(
+                       (select jsonb_object_agg(t.feedback_type, t.n)
+                          from (select feedback_type, count(*) as n from user_feedback
+                                 where video_item_id = $1 group by feedback_type) t),
+                       '{}'::jsonb
+                   ) as report_counts
               from user_feedback where video_item_id = $1
         )
         update video_items vi
            set same_count = agg.same_count,
                different_count = agg.different_count,
+               report_counts = agg.report_counts,
                is_hidden = (agg.different_count >= $2 and agg.different_count > agg.same_count * 2)
           from agg
          where vi.id = $1
-        returning vi.id, vi.same_count, vi.different_count, vi.is_hidden
+        returning vi.id, vi.video_id, vi.image_key, vi.same_count, vi.different_count, vi.is_hidden, vi.report_counts
         """,
         item_id,
         hide_threshold,
+    )
+
+
+async def clear_reports(conn: asyncpg.Connection, item_id: UUID, feedback_type: str) -> None:
+    """처리한(사진을 다시 고른) 제보는 지운다 — 새 사진에 대한 제보를 처음부터 다시 모으기 위해."""
+    await conn.execute(
+        "delete from user_feedback where video_item_id = $1 and feedback_type = $2", item_id, feedback_type
+    )
+
+
+async def get_item_for_recapture(conn: asyncpg.Connection, item_id: UUID) -> asyncpg.Record | None:
+    return await conn.fetchrow(
+        """
+        select vi.id, vi.video_id, vi.timestamp_sec::float8 as timestamp_sec, vi.image_key, p.name_ko, p.name_en,
+               v.source_url
+          from video_items vi
+          join products p on p.id = vi.product_id
+          join videos v on v.id = vi.video_id
+         where vi.id = $1
+        """,
+        item_id,
     )
 
 

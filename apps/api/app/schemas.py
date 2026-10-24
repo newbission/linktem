@@ -9,7 +9,11 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-FeedbackType = Literal["SAME", "DIFFERENT"]
+FeedbackType = Literal[
+    "SAME", "WRONG_PRODUCT", "NOT_IN_VIDEO", "WRONG_IMAGE", "WRONG_RETAILER", "WRONG_DETAIL", "DUPLICATE"
+]
+# '다른 제품' 판정 계열 — 숨김 임계치와 앙상블 감점에 쓰인다
+IDENTITY_NEGATIVE_TYPES: tuple[str, ...] = ("WRONG_PRODUCT", "NOT_IN_VIDEO")
 
 SHOPPING_CATEGORIES: tuple[str, ...] = (
     "신선식품",
@@ -100,6 +104,7 @@ class VideoLookupResponse(BaseModel):
 class UserFeedbackRequest(BaseModel):
     item_id: str = Field(..., min_length=1, max_length=64)
     feedback_type: FeedbackType
+    cancel: Optional[bool] = None
 
 
 class UserFeedbackResponse(BaseModel):
@@ -107,6 +112,8 @@ class UserFeedbackResponse(BaseModel):
     same_count: int
     different_count: int
     is_hidden: bool
+    report_counts: dict[str, int]
+    image_reset: bool
 
 
 # ---------------------------------------------------------------------------

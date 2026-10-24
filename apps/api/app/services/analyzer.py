@@ -51,7 +51,8 @@ from app.services.ensemble import (
     parse_runs,
 )
 from app.services.gemini import GeminiAnalyzer, GeminiError
-from app.services.image_processor import ImageProcessor
+from app.services.frame_selector import FrameQuery, FrameSelector
+from app.services.image_processor import FrameCandidate, ImageProcessor, discard, sharpest
 from app.services.storage import (
     MediaStorage,
     StorageError,
@@ -67,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 # 타임스탬프가 이 이상 바뀌면 스틸컷을 다시 캡처
 RECAPTURE_THRESHOLD_SEC = 3.0
+# '사진이 달라요' 제보로 다시 고를 때의 후보 구간 (처음보다 넓게)
+RECAPTURE_OFFSETS = (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0)
 # 리스트 갱신 조회(GET /api/videos)에서 한 번에 받을 수 있는 영상 수
 MAX_LOOKUP_IDS = 30
 
@@ -88,6 +91,21 @@ class AnalysisError(Exception):
 
 
 @dataclass
+class CaptureTarget:
+    timestamp_sec: float
+    name_ko: str
+    name_en: str
+
+    @classmethod
+    def of(cls, item: ConsensusItem) -> "CaptureTarget":
+        return cls(item.timestamp_sec, item.name_ko, item.name_en)
+
+    @classmethod
+    def of_row(cls, row: asyncpg.Record) -> "CaptureTarget":
+        return cls(float(row["timestamp_sec"]), row["name_ko"], row["name_en"])
+
+
+@dataclass
 class _Plan:
     consensus: ConsensusItem
     existing: asyncpg.Record | None
@@ -104,6 +122,7 @@ class Analyzer:
         gemini: GeminiAnalyzer,
         images: ImageProcessor,
         storage: MediaStorage,
+        frame_selector: FrameSelector | None = None,
     ) -> None:
         self._settings = settings
         self._pool = pool
@@ -111,6 +130,7 @@ class Analyzer:
         self._gemini = gemini
         self._images = images
         self._storage = storage
+        self._frames = frame_selector
         self._video_locks: dict[str, asyncio.Lock] = {}
         # 실행 중인 1회차 작업 (GC 로 사라지지 않도록 참조 보관, 종료 시 정리)
         self._job_tasks: set[asyncio.Task[None]] = set()
@@ -282,7 +302,7 @@ class Analyzer:
                 await on_stage("capturing")
                 consensus = build_consensus(parse_runs([raw_items]))
                 uploads = await self._capture_and_upload(
-                    video_id, downloaded, [c.timestamp_sec for c in consensus], workdir
+                    video_id, downloaded, [CaptureTarget.of(c) for c in consensus], workdir
                 )
 
         await on_stage("saving")
@@ -402,7 +422,7 @@ class Analyzer:
                         workdir = Path(tmp)
                         downloaded = await self._downloader.download(video["source_url"], workdir)
                         uploads = await self._capture_and_upload(
-                            video_id, downloaded, [float(i["timestamp_sec"]) for i in items], workdir
+                            video_id, downloaded, [CaptureTarget.of_row(i) for i in items], workdir
                         )
                 async with pool.acquire() as conn, conn.transaction():
                     for item, upload in zip(items, uploads):
@@ -456,7 +476,7 @@ class Analyzer:
         uploads: list[UploadedImage | None] = []
         if capture_plans and downloaded is not None and workdir is not None:
             uploads = await self._capture_and_upload(
-                video_id, downloaded, [p.consensus.timestamp_sec for p in capture_plans], workdir
+                video_id, downloaded, [CaptureTarget.of(p.consensus) for p in capture_plans], workdir
             )
         upload_by_plan = {id(p): u for p, u in zip(capture_plans, uploads)}
 
@@ -618,22 +638,66 @@ class Analyzer:
         return downloaded, raw_items
 
     async def _capture_and_upload(
-        self, video_id: UUID, downloaded: DownloadedVideo, timestamps: list[float], workdir: Path
+        self,
+        video_id: UUID,
+        downloaded: DownloadedVideo,
+        targets: list[CaptureTarget],
+        workdir: Path,
+        offsets: tuple[float, ...] | list[float] | None = None,
     ) -> list[UploadedImage | None]:
+        """상품별 후보 프레임 캡처 → (경량 AI 1회) 제품이 보이는 프레임 선택 → 확대용·썸네일 업로드."""
+        if not targets:
+            return []
+        if not self._storage.enabled:
+            logger.warning("스틸컷 저장소 미설정 — 업로드 생략")
+            return [None] * len(targets)
         duration = float(downloaded.meta.duration) if downloaded.meta.duration else None
 
-        async def _one(ts: float) -> UploadedImage | None:
+        async def _candidates(target: CaptureTarget) -> list[FrameCandidate]:
             try:
-                captured = await self._images.capture_webp(downloaded.path, ts, workdir, duration)
-                if not self._storage.enabled:
-                    logger.warning("스틸컷 저장소 미설정 — 업로드 생략")
-                    return None
-                return await upload_capture(self._storage, build_image_key(video_id), captured.full, captured.thumb)
-            except (StorageError, RuntimeError) as exc:
-                logger.warning("capture/upload failed at %.2fs: %s", ts, exc)
-                return None
+                return await self._images.capture_candidates(
+                    downloaded.path, target.timestamp_sec, workdir, duration, offsets
+                )
+            except RuntimeError as exc:
+                logger.warning("capture failed at %.2fs: %s", target.timestamp_sec, exc)
+                return []
 
-        return list(await asyncio.gather(*(_one(ts) for ts in timestamps)))
+        per_target = list(await asyncio.gather(*(_candidates(t) for t in targets)))
+        try:
+            picks: list[int | None] | None = None
+            if self._frames is not None and self._frames.enabled:
+                queried = [i for i, c in enumerate(per_target) if c]
+                choices = await self._frames.choose(
+                    [
+                        FrameQuery(targets[i].name_ko, targets[i].name_en, [c.preview for c in per_target[i]])
+                        for i in queried
+                    ]
+                )
+                if choices is not None:
+                    picks = [None] * len(targets)
+                    for i, choice in zip(queried, choices):
+                        picks[i] = choice
+                    missing = sum(1 for i in queried if picks[i] is None)
+                    logger.info("frame selection: %d/%d picked by AI", len(queried) - missing, len(queried))
+
+            async def _upload(index: int) -> UploadedImage | None:
+                candidates = per_target[index]
+                if not candidates:
+                    return None
+                choice = picks[index] if picks is not None else None
+                # AI 가 고른 프레임, 없으면(보이는 후보 없음·선택 실패) 가장 선명한 프레임
+                chosen = candidates[choice] if choice is not None else sharpest(candidates)
+                try:
+                    captured = await self._images.encode_candidate(chosen)
+                    return await upload_capture(self._storage, build_image_key(video_id), captured.full, captured.thumb)
+                except (StorageError, RuntimeError, OSError) as exc:
+                    logger.warning("encode/upload failed at %.2fs: %s", chosen.timestamp_sec, exc)
+                    return None
+
+            return list(await asyncio.gather(*(_upload(i) for i in range(len(targets)))))
+        finally:
+            for candidates in per_target:
+                discard(candidates)
 
     async def _resolve_short_link(self, target: VideoTarget) -> VideoTarget:
         try:
@@ -681,21 +745,150 @@ class Analyzer:
             ],
         )
 
-    async def submit_feedback(self, item_id: str, feedback_type: str, client_hash: str) -> UserFeedbackResponse:
+    async def submit_feedback(
+        self,
+        item_id: str,
+        feedback_type: str,
+        client_hash: str,
+        background: BackgroundTasks | None = None,
+        *,
+        cancel: bool = False,
+    ) -> UserFeedbackResponse:
         pool = self._require_pool()
         item_uuid = _parse_uuid(item_id)
+        image_reset = False
         async with pool.acquire() as conn, conn.transaction():
             row = await repo.upsert_feedback(
-                conn, item_uuid, feedback_type, client_hash, self._settings.feedback_hide_threshold
+                conn, item_uuid, feedback_type, client_hash, self._settings.feedback_hide_threshold, cancel=cancel
             )
-        if row is None:
-            raise AnalysisError(404, "아이템을 찾을 수 없습니다.")
+            if row is None:
+                raise AnalysisError(404, "아이템을 찾을 수 없습니다.")
+            image_reports = int((row["report_counts"] or {}).get("WRONG_IMAGE", 0))
+            if (
+                not cancel
+                and feedback_type == "WRONG_IMAGE"
+                and row["image_key"]
+                and image_reports >= self._settings.image_report_threshold
+            ):
+                # 사진을 내리고(유예 후 삭제) 처리한 제보는 비운 뒤, 더 넓은 구간에서 다시 고른다
+                await repo.set_item_image(conn, item_uuid, "", "", "")
+                await repo.log_image_event(
+                    conn,
+                    r2_key=row["image_key"],
+                    event="SUPERSEDED",
+                    video_id=row["video_id"],
+                    item_id=item_uuid,
+                    expires_at=superseded_expiry(self._settings),
+                )
+                await repo.clear_reports(conn, item_uuid, "WRONG_IMAGE")
+                row = await repo.refresh_feedback_counts(conn, item_uuid, self._settings.feedback_hide_threshold)
+                image_reset = True
+
+        if image_reset:
+            logger.info("item %s image reported %d times — recapturing", item_uuid, image_reports)
+            if background is not None:
+                background.add_task(self.recapture_item, item_uuid)
+            else:
+                await self.recapture_item(item_uuid)
         return UserFeedbackResponse(
             item_id=str(row["id"]),
             same_count=row["same_count"],
             different_count=row["different_count"],
             is_hidden=row["is_hidden"],
+            report_counts={k: int(v) for k, v in (row["report_counts"] or {}).items()},
+            image_reset=image_reset,
         )
+
+    async def repick_images(self, video_id: str) -> int:
+        """영상의 모든 스틸컷을 후보 프레임 + AI 선택으로 다시 고른다 (관리자용). 바뀐 이미지 수 반환."""
+        pool = self._require_pool()
+        vid = _parse_uuid(video_id)
+        async with self._lock_for(vid):
+            async with pool.acquire() as conn:
+                video = await repo.get_video(conn, vid)
+                if video is None:
+                    raise AnalysisError(404, "영상을 찾을 수 없습니다.")
+                items = await repo.list_items(conn, vid, include_hidden=True)
+            if not items:
+                return 0
+            async with self._heavy:
+                with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
+                    workdir = Path(tmp)
+                    downloaded = await self._downloader.download(video["source_url"], workdir)
+                    uploads = await self._capture_and_upload(
+                        vid, downloaded, [CaptureTarget.of_row(i) for i in items], workdir
+                    )
+            changed = 0
+            try:
+                async with pool.acquire() as conn, conn.transaction():
+                    for item, upload in zip(items, uploads):
+                        if upload is None:
+                            continue
+                        if item["image_key"]:
+                            await repo.log_image_event(
+                                conn,
+                                r2_key=item["image_key"],
+                                event="SUPERSEDED",
+                                video_id=vid,
+                                item_id=item["id"],
+                                expires_at=superseded_expiry(self._settings),
+                            )
+                        await repo.set_item_image(conn, item["id"], upload.key, upload.url, upload.thumb_url)
+                        await repo.log_image_event(
+                            conn,
+                            r2_key=upload.key,
+                            event="UPLOADED",
+                            video_id=vid,
+                            item_id=item["id"],
+                            size_bytes=upload.size_bytes,
+                        )
+                        changed += 1
+            except Exception:
+                await delete_images(self._storage, [u.key for u in uploads if u])
+                raise
+            logger.info("video %s images re-picked (%d/%d)", vid, changed, len(items))
+            return changed
+
+    async def recapture_item(self, item_id: UUID) -> None:
+        """'사진이 달라요' 제보 처리: 기존보다 넓은 구간(±3초)의 후보에서 제품이 보이는 프레임을 다시 고른다."""
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            item = await repo.get_item_for_recapture(conn, item_id)
+        if item is None:
+            return
+        video_id = item["video_id"]
+        async with self._lock_for(video_id):
+            try:
+                async with self._heavy:
+                    with tempfile.TemporaryDirectory(prefix="linktem-") as tmp:
+                        workdir = Path(tmp)
+                        downloaded = await self._downloader.download(item["source_url"], workdir)
+                        uploads = await self._capture_and_upload(
+                            video_id, downloaded, [CaptureTarget.of_row(item)], workdir, RECAPTURE_OFFSETS
+                        )
+                upload = uploads[0] if uploads else None
+                if upload is None:
+                    return
+                async with pool.acquire() as conn, conn.transaction():
+                    still_exists = await conn.fetchval(
+                        "select 1 from video_items where id = $1 and image_key = '' for update", item_id
+                    )
+                    if not still_exists:
+                        # 그 사이 아이템이 지워졌거나 다른 경로로 사진이 채워짐 → 새 사진은 버림
+                        await delete_images(self._storage, [upload.key])
+                        return
+                    await repo.set_item_image(conn, item_id, upload.key, upload.url, upload.thumb_url)
+                    await repo.log_image_event(
+                        conn,
+                        r2_key=upload.key,
+                        event="UPLOADED",
+                        video_id=video_id,
+                        item_id=item_id,
+                        size_bytes=upload.size_bytes,
+                    )
+                logger.info("item %s recaptured", item_id)
+            except Exception:  # noqa: BLE001 — 실패하면 '사진 준비 중'으로 남고 다음 앙상블 회차에서 다시 캡처
+                logger.exception("recapture failed for item %s", item_id)
 
     async def related(self, video_id: str) -> RelatedVideosResponse:
         pool = self._require_pool()

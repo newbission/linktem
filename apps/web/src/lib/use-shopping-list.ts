@@ -134,14 +134,28 @@ export function useShoppingList() {
 
   const clearAll = useCallback(() => mutate(() => ({ ...EMPTY_LIST })), [mutate]);
 
-  const setFeedback = useCallback(
-    (itemId: string, type: FeedbackType | null) =>
+  /** 내 제보 유형 목록을 통째로 교체 (빈 배열이면 삭제) */
+  const setReports = useCallback(
+    (itemId: string, types: FeedbackType[]) =>
       mutate((prev) => {
         const feedback = { ...prev.feedback };
-        if (type) feedback[itemId] = type;
+        if (types.length) feedback[itemId] = types;
         else delete feedback[itemId];
         return { ...prev, feedback };
       }),
+    [mutate],
+  );
+
+  /** '사진이 달라요' 제보로 서버가 사진을 다시 고르는 동안 카드에 '준비 중' 표시 */
+  const clearItemImage = useCallback(
+    (itemId: string) =>
+      mutate((prev) => ({
+        ...prev,
+        videos: prev.videos.map((v) => ({
+          ...v,
+          items: v.items.map((i) => (i.id === itemId ? { ...i, image_url: '', thumb_url: '' } : i)),
+        })),
+      })),
     [mutate],
   );
 
@@ -177,7 +191,8 @@ export function useShoppingList() {
     toggleChecked,
     resetChecks,
     clearAll,
-    setFeedback,
+    setReports,
+    clearItemImage,
     hideItem,
   };
 }

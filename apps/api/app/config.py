@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # 리스트 카드 썸네일: 화면 84px(3배율 기기 약 250px) → 짧은 변 256px, q60 (약 10KB)
     image_thumb_short_side: int = 256
     image_thumb_quality: int = 60
+    # AI 시점 기준 후보 프레임 오프셋(초). 환경변수는 JSON 배열: IMAGE_CANDIDATE_OFFSETS=[-1,-0.5,0,0.5,1]
+    image_candidate_offsets: list[float] = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    # 후보 중 제품이 보이는 프레임을 고르는 경량 모델 (별도 무료 한도). 비우면 선명도만으로 선택
+    frame_selection_model: str = "gemini-3.5-flash-lite"
+    frame_selection_timeout_sec: int = 60
 
     # --- 스틸컷 저장소 ---
     # auto: R2 자격 증명이 있으면 r2, 없으면 local / local: 디스크 / r2: Cloudflare R2
@@ -76,6 +81,8 @@ class Settings(BaseSettings):
     # --- 앙상블 ---
     ensemble_max_runs: int = 5
     feedback_hide_threshold: int = 3
+    # '사진이 달라요' 제보가 이만큼 모이면 사진을 내리고 더 넓은 구간에서 다시 고른다
+    image_report_threshold: int = 2
 
     # --- 레이트 리밋 ---
     analyze_rate_limit_per_min: int = 6

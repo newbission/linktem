@@ -1,5 +1,7 @@
 import type { AnalysisJob, FeedbackType, VideoAnalysisResponse } from '@linktem/types';
 
+import { migrateReports } from './reports';
+
 /** 브라우저에 보관하는 장보기 리스트 (텍스트 데이터만 — 이미지는 IndexedDB) */
 export interface StoredList {
   version: 1;
@@ -7,8 +9,8 @@ export interface StoredList {
   videos: VideoAnalysisResponse[];
   /** ShoppingItem.id → 체크 여부 */
   checked: Record<string, boolean>;
-  /** ShoppingItem.id → 보낸 피드백 */
-  feedback: Record<string, FeedbackType>;
+  /** ShoppingItem.id → 내가 보낸 제보 유형들 */
+  feedback: Record<string, FeedbackType[]>;
   /** 분석 중이거나 실패한 작업 (완료되면 videos 로 옮기고 여기서 뺀다). 최근 작업이 앞 */
   jobs: AnalysisJob[];
   /** video_id → 리스트에 추가한 시각 (ms) — '분석한 영상' 목록 표시용 */
@@ -34,6 +36,7 @@ export function normalizeList(raw: Partial<StoredList>): StoredList {
     ...EMPTY_LIST,
     ...raw,
     jobs: Array.isArray(raw.jobs) ? raw.jobs : [],
+    feedback: migrateReports(raw.feedback),
     addedAt: raw.addedAt && typeof raw.addedAt === 'object' ? raw.addedAt : {},
   };
 }

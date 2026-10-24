@@ -219,7 +219,7 @@ async def test_feedback_hides_item_and_related_videos(env) -> None:
     ramen = next(i for i in first.items if i.name_en == RAMEN[1])
 
     for n in range(3):
-        fb = await analyzer.submit_feedback(ramen.id, "DIFFERENT", f"voter-{n}")
+        fb = await analyzer.submit_feedback(ramen.id, "WRONG_PRODUCT", f"voter-{n}")
     assert fb.different_count == 3 and fb.is_hidden
     # 같은 사람 재투표는 갱신
     fb = await analyzer.submit_feedback(ramen.id, "SAME", "voter-0")
@@ -413,3 +413,63 @@ async def test_thumbnails_and_notes_are_stored_and_cleaned(env) -> None:
     result = await cleanup_expired_images(storage, pool, settings)  # type: ignore[arg-type]
     assert result["expired_images"] == len(first.items)
     assert storage.objects == {}, "썸네일도 함께 삭제"
+
+
+class FakeFrameSelector:
+    """후보 중 '마지막' 프레임을 고르는 가짜 경량 AI — 선명도 기준과 다른 선택이 실제로 반영되는지 확인용."""
+
+    enabled = True
+
+    def __init__(self) -> None:
+        self.calls: list[list[int]] = []
+
+    async def choose(self, queries):  # type: ignore[no-untyped-def]
+        self.calls.append([len(q.previews) for q in queries])
+        return [len(q.previews) - 1 for q in queries]
+
+
+async def test_frame_selector_picks_candidate(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+    selector = FakeFrameSelector()
+    analyzer._frames = selector  # type: ignore[attr-defined]
+    first = await resolve(analyzer, URL, "client-1")
+    assert len(selector.calls) == 1, "영상 하나에 프레임 선택 호출은 1번"
+    assert selector.calls[0] == [5] * len(first.items), "상품마다 후보 5장"
+    assert all(i.image_url and i.thumb_url for i in first.items)
+
+
+async def test_report_categories_and_image_recapture(env) -> None:
+    analyzer, pool, gemini, storage, downloader, settings = env
+    first = await resolve(analyzer, URL, "client-1")
+    gyoza = next(i for i in first.items if i.name_en == GYOZA[1])
+
+    # 한 사람이 여러 유형을 제보할 수 있고, 취소도 된다
+    r = await analyzer.submit_feedback(gyoza.id, "WRONG_RETAILER", "voter-1")
+    r = await analyzer.submit_feedback(gyoza.id, "WRONG_DETAIL", "voter-1")
+    assert r.report_counts == {"WRONG_RETAILER": 1, "WRONG_DETAIL": 1} and not r.is_hidden
+    r = await analyzer.submit_feedback(gyoza.id, "WRONG_DETAIL", "voter-1", cancel=True)
+    assert r.report_counts == {"WRONG_RETAILER": 1}
+
+    # 제품 판정은 1인 1표: '영상에 없음' → '맞아요' 로 바꾸면 교체
+    r = await analyzer.submit_feedback(gyoza.id, "NOT_IN_VIDEO", "voter-2")
+    assert r.different_count == 1
+    r = await analyzer.submit_feedback(gyoza.id, "SAME", "voter-2")
+    assert (r.same_count, r.different_count) == (1, 0)
+
+    # '사진이 달라요' 2명 → 사진을 내리고 넓은 구간에서 다시 고름 (기존 사진은 유예 후 삭제 대상)
+    old_key = next(k for k in storage.objects if gyoza.image_url.endswith(k))
+    r = await analyzer.submit_feedback(gyoza.id, "WRONG_IMAGE", "voter-3")
+    assert not r.image_reset and r.report_counts["WRONG_IMAGE"] == 1
+    calls_before = downloader.calls
+    r = await analyzer.submit_feedback(gyoza.id, "WRONG_IMAGE", "voter-4")  # background 없음 → 즉시 재캡처
+    assert r.image_reset and "WRONG_IMAGE" not in r.report_counts, "처리한 사진 제보는 비움"
+    assert downloader.calls == calls_before + 1
+
+    after = await analyzer.build_response(UUID(first.video_id))
+    new_gyoza = next(i for i in after.items if i.id == gyoza.id)
+    assert new_gyoza.image_url and new_gyoza.image_url != gyoza.image_url
+    async with pool.acquire() as conn:
+        superseded = await conn.fetchval(
+            "select count(*) from image_lifecycle_logs where event = 'SUPERSEDED' and r2_key = $1", old_key
+        )
+    assert superseded == 1

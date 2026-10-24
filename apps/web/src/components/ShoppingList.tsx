@@ -5,6 +5,7 @@ import { Lock, Sparkles, Trash2 } from 'lucide-react';
 import type { FeedbackType, RelatedVideo } from '@linktem/types';
 
 import { groupEntries, type FilterTab, type ListEntry } from '@/lib/grouping';
+import type { ReportType } from '@/lib/reports';
 
 import { ItemCard } from './ItemCard';
 
@@ -13,14 +14,17 @@ interface Props {
   tab: FilterTab;
   imageMap: Record<string, string>;
   related: Record<string, RelatedVideo[]>;
-  feedback: Record<string, FeedbackType>;
+  feedback: Record<string, FeedbackType[]>;
+  numbers: Record<string, number>;
   online: boolean;
   onToggle: (itemId: string) => void;
-  onFeedback: (itemId: string, type: FeedbackType | null) => void;
+  onReport: (itemId: string, type: ReportType, cancel: boolean) => void;
   onOpenRelated: (url: string) => void;
   onOpenImage: (itemId: string) => void;
   onRemoveVideo: (videoId: string) => void;
 }
+
+const EMPTY_REPORTS: FeedbackType[] = [];
 
 /** '내 분석 영상'에서 영상을 누르면 영상별 보기의 해당 묶음으로 스크롤 */
 export function videoGroupId(videoId: string): string {
@@ -33,9 +37,10 @@ export function ShoppingList({
   imageMap,
   related,
   feedback,
+  numbers,
   online,
   onToggle,
-  onFeedback,
+  onReport,
   onOpenRelated,
   onOpenImage,
   onRemoveVideo,
@@ -100,11 +105,12 @@ export function ShoppingList({
                   video={video}
                   imageSrc={imageMap[item.image_url]}
                   related={related[item.id]}
-                  feedback={feedback[item.id]}
+                  number={numbers[item.id]}
+                  reports={feedback[item.id] ?? EMPTY_REPORTS}
                   online={online}
                   showVideoTitle={tab !== 'video'}
                   onToggle={onToggle}
-                  onFeedback={onFeedback}
+                  onReport={onReport}
                   onOpenRelated={onOpenRelated}
                   onOpenImage={onOpenImage}
                 />

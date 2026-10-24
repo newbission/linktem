@@ -1,22 +1,37 @@
 'use client';
 
-import { Check, Clapperboard, ImageOff, MessageSquareQuote, Play, ThumbsDown, TriangleAlert, Undo2, ZoomIn } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Clapperboard,
+  Flag,
+  ImageOff,
+  MessageSquareQuote,
+  Play,
+  TriangleAlert,
+  X,
+  ZoomIn,
+} from 'lucide-react';
 import { useState } from 'react';
 
 import type { FeedbackType, RelatedVideo, ShoppingItem, VideoAnalysisResponse } from '@linktem/types';
 
 import { formatTimestamp, retailerStyle, timestampUrl } from '@/lib/format';
+import { REPORT_LABELS, REPORT_OPTIONS, type ReportType } from '@/lib/reports';
 
 interface Props {
   item: ShoppingItem;
   video: VideoAnalysisResponse;
   imageSrc?: string;
   related?: RelatedVideo[];
-  feedback?: FeedbackType;
+  /** 체크리스트 번호 (먼저 담은 순서, 체크해도 바뀌지 않음) */
+  number?: number;
+  /** 내가 보낸 제보 유형 */
+  reports: FeedbackType[];
   online: boolean;
   showVideoTitle?: boolean;
   onToggle: (itemId: string) => void;
-  onFeedback: (itemId: string, type: FeedbackType | null) => void;
+  onReport: (itemId: string, type: ReportType, cancel: boolean) => void;
   onOpenRelated: (url: string) => void;
   /** 스틸컷을 누르면 확대 보기 */
   onOpenImage: (itemId: string) => void;
@@ -27,21 +42,23 @@ export function ItemCard({
   video,
   imageSrc,
   related,
-  feedback,
+  number,
+  reports,
   online,
   showVideoTitle,
   onToggle,
-  onFeedback,
+  onReport,
   onOpenRelated,
   onOpenImage,
 }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const checked = item.is_checked;
   // 오프라인 저장본 → 썸네일 → (썸네일 도입 전 캡처) 확대용 이미지
   const src = imageSrc ?? (item.thumb_url || item.image_url);
   const canZoom = Boolean(src) && !imageFailed;
   const sceneUrl = timestampUrl(video.source_url, item.timestamp_sec);
-  const markedDifferent = feedback === 'DIFFERENT';
+  const myReports = reports.filter((t): t is ReportType => t !== 'SAME');
 
   return (
     <li
@@ -112,6 +129,16 @@ export function ItemCard({
         {/* 상품 정보 */}
         <div className="min-w-0 flex-1">
           <p className={`text-[15px] font-bold leading-snug text-slate-900 ${checked ? 'line-through' : ''}`}>
+            {number !== undefined && (
+              <span
+                className={`mr-1.5 inline-flex h-5 min-w-5 -translate-y-px items-center justify-center rounded-md px-1 align-middle text-[11px] font-extrabold no-underline ${
+                  checked ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'
+                }`}
+                aria-label={`${number}번`}
+              >
+                {number}
+              </span>
+            )}
             {item.name_ko}
           </p>
           <p className="mt-0.5 truncate text-xs text-slate-500">{item.name_en}</p>
@@ -136,31 +163,63 @@ export function ItemCard({
         </div>
       </div>
 
-      {/* 액션 */}
-      <div className="mt-3 flex items-center gap-2">
-        {markedDifferent ? (
-          <button
-            type="button"
-            onClick={() => onFeedback(item.id, null)}
-            className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200"
+      {/* 제보 */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setReportOpen((v) => !v)}
+          disabled={!online}
+          aria-expanded={reportOpen}
+          className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 transition active:scale-95 disabled:opacity-40"
+        >
+          <Flag size={13} aria-hidden />
+          제보하기
+          <ChevronDown size={13} className={`transition ${reportOpen ? 'rotate-180' : ''}`} aria-hidden />
+        </button>
+        {myReports.map((type) => (
+          <span
+            key={type}
+            className="inline-flex items-center gap-1 rounded-full bg-amber-50 py-1 pl-2.5 pr-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200"
           >
-            <Undo2 size={14} aria-hidden />
-            되돌리기
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onFeedback(item.id, 'DIFFERENT')}
-            disabled={!online}
-            className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2.5 text-xs font-semibold text-slate-600 transition active:scale-95 disabled:opacity-40"
-          >
-            <ThumbsDown size={14} aria-hidden />
-            다른 제품이에요
-          </button>
-        )}
+            {REPORT_LABELS[type]}
+            <button
+              type="button"
+              onClick={() => onReport(item.id, type, true)}
+              disabled={!online}
+              className="rounded-full p-0.5 text-amber-500 hover:bg-amber-100 disabled:opacity-40"
+              aria-label={`'${REPORT_LABELS[type]}' 제보 취소`}
+            >
+              <X size={12} />
+            </button>
+          </span>
+        ))}
       </div>
-      {markedDifferent && (
-        <p className="mt-2 text-xs text-amber-700">알려주셔서 고마워요! 다음 분석부터 반영돼요.</p>
+      {reportOpen && (
+        <div className="mt-2 rounded-xl bg-slate-50 p-2" role="group" aria-label="제보 유형">
+          <p className="px-1 pb-1.5 text-[11px] text-slate-500">해당하는 걸 모두 눌러 주세요. 다시 누르면 취소돼요.</p>
+          <div className="grid grid-cols-1 gap-1 min-[380px]:grid-cols-2">
+            {REPORT_OPTIONS.map(({ type, label, hint }) => {
+              const active = myReports.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => onReport(item.id, type, active)}
+                  title={hint}
+                  className={`rounded-lg px-2.5 py-2 text-left text-xs font-semibold ring-1 transition active:scale-[0.98] ${
+                    active
+                      ? 'bg-amber-100 text-amber-900 ring-amber-300'
+                      : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {label}
+                  <span className="mt-0.5 block text-[10px] font-normal leading-snug text-slate-500">{hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* 이 제품이 나온 다른 영상 */}

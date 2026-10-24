@@ -4,10 +4,12 @@ import { AlertCircle, CircleCheck, WifiOff, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { AnalysisJob, FeedbackType, RelatedVideo, VideoAnalysisResponse } from '@linktem/types';
+import type { AnalysisJob, RelatedVideo, VideoAnalysisResponse } from '@linktem/types';
 
 import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, waitForServer } from '@/lib/api';
 import { groupEntries, toEntries, type FilterTab } from '@/lib/grouping';
+import { itemNumbers } from '@/lib/numbering';
+import { toggleReport, type ReportType } from '@/lib/reports';
 import { canonicalVideoKey } from '@/lib/share';
 import { isActiveJob, useJobPolling } from '@/lib/use-job-polling';
 import { useOfflineImages, useOnlineStatus, useShoppingList } from '@/lib/use-shopping-list';
@@ -53,7 +55,8 @@ export function HomeClient() {
     toggleChecked,
     resetChecks,
     clearAll,
-    setFeedback,
+    setReports,
+    clearItemImage,
     hideItem,
   } = useShoppingList();
 
@@ -70,6 +73,7 @@ export function HomeClient() {
   const myVideosRef = useRef<HTMLDivElement>(null);
 
   const entries = useMemo(() => toEntries(list.videos, list.checked), [list.videos, list.checked]);
+  const numbers = useMemo(() => itemNumbers(list.videos), [list.videos]);
   const imageUrls = useMemo(() => entries.map((e) => e.item.image_url).filter(Boolean), [entries]);
   const imageMap = useOfflineImages(imageUrls, offlineSavedAt);
   // 확대 보기 넘기기 순서 = 지금 탭에서 보이는 순서 (이미지가 있는 항목만)
@@ -237,23 +241,33 @@ export function HomeClient() {
     void refreshVideos(list.videos);
   }, [hydrated, list.videos, loadRelated, refreshVideos]);
 
-  const handleFeedback = useCallback(
-    async (itemId: string, type: FeedbackType | null) => {
-      const previous = list.feedback[itemId] ?? null;
-      setFeedback(itemId, type);
+  const handleReport = useCallback(
+    async (itemId: string, type: ReportType, cancel: boolean) => {
+      const previous = list.feedback[itemId] ?? [];
+      setReports(itemId, toggleReport(previous, type, cancel));
       try {
-        // '되돌리기'는 "영상 속 제품이 맞아요(SAME)" 로 재투표 → 서버는 1인 1표로 갱신
-        const res = await sendFeedback({ item_id: itemId, feedback_type: type ?? 'SAME' });
+        const res = await sendFeedback({ item_id: itemId, feedback_type: type, cancel: cancel || undefined });
         if (res.is_hidden) {
           hideItem(itemId);
-          setNotice('여러 분이 다른 제품이라고 알려주셔서 리스트에서 뺐어요.');
+          setNotice('여러 분이 알려주셔서 이 제품을 리스트에서 뺐어요.');
+        } else if (res.image_reset) {
+          clearItemImage(itemId);
+          setNotice('사진을 다시 고르고 있어요. 잠시 후 바뀌어요');
+          // 서버가 새 사진을 고르는 데 보통 수십 초 — 두 번에 나눠 조용히 받아온다
+          const video = list.videos.find((v) => v.items.some((i) => i.id === itemId));
+          if (video) {
+            setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 30_000);
+            setTimeout(() => void refreshVideos([{ ...video, is_locked: false }]), 90_000);
+          }
+        } else if (!cancel) {
+          setNotice('제보 고마워요! 확인해서 반영할게요');
         }
       } catch (err) {
-        setFeedback(itemId, previous);
-        setError(err instanceof Error ? err.message : '피드백을 보내지 못했어요.');
+        setReports(itemId, previous);
+        setError(err instanceof Error ? err.message : '제보를 보내지 못했어요.');
       }
     },
-    [list.feedback, setFeedback, hideItem],
+    [list.feedback, list.videos, setReports, hideItem, clearItemImage, refreshVideos],
   );
 
   const hasItems = list.videos.length > 0;
@@ -343,9 +357,10 @@ export function HomeClient() {
               imageMap={imageMap}
               related={related}
               feedback={list.feedback}
+              numbers={numbers}
               online={online}
               onToggle={toggleChecked}
-              onFeedback={handleFeedback}
+              onReport={handleReport}
               onOpenRelated={analyze}
               onOpenImage={setViewerItemId}
               onRemoveVideo={removeVideo}
@@ -363,6 +378,7 @@ export function HomeClient() {
           entries={viewerEntries}
           index={viewerIndex}
           imageMap={imageMap}
+          numbers={numbers}
           online={online}
           onIndexChange={(i) => setViewerItemId(viewerEntries[i]?.item.id ?? null)}
           onClose={() => setViewerItemId(null)}

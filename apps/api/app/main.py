@@ -31,6 +31,7 @@ from app.schemas import (
 )
 from app.services.analyzer import MAX_LOOKUP_IDS, AnalysisError, Analyzer
 from app.services.downloader import VideoDownloader
+from app.services.frame_selector import FrameSelector
 from app.services.gemini import GeminiAnalyzer
 from app.services.image_processor import ImageProcessor
 from app.services.storage import LocalStorage, create_storage, cleanup_expired_images
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         gemini=GeminiAnalyzer(settings),
         images=ImageProcessor(settings),
         storage=storage,
+        frame_selector=FrameSelector(settings),
     )
     app.state.analyze_limiter = SlidingWindowLimiter(settings.analyze_rate_limit_per_min)
     app.state.feedback_limiter = SlidingWindowLimiter(30)
@@ -181,18 +183,36 @@ async def lookup_videos(
 async def feedback(
     body: UserFeedbackRequest,
     request: Request,
+    background: BackgroundTasks,
     analyzer: Analyzer = Depends(get_analyzer),
     settings: Settings = Depends(settings_dep),
 ) -> UserFeedbackResponse:
     _enforce_rate_limit(request.app.state.feedback_limiter, request)
     return await analyzer.submit_feedback(
-        body.item_id, body.feedback_type, client_hash(request, settings.client_hash_salt)
+        body.item_id,
+        body.feedback_type,
+        client_hash(request, settings.client_hash_salt),
+        background,
+        cancel=bool(body.cancel),
     )
 
 
 @app.get("/api/videos/{video_id}/related", response_model=RelatedVideosResponse, tags=["analyze"])
 async def related_videos(video_id: str, analyzer: Analyzer = Depends(get_analyzer)) -> RelatedVideosResponse:
     return await analyzer.related(video_id)
+
+
+@app.post("/api/admin/videos/{video_id}/repick-images", tags=["ops"])
+async def admin_repick_images(
+    video_id: str,
+    x_admin_token: str = Header(default=""),
+    analyzer: Analyzer = Depends(get_analyzer),
+    settings: Settings = Depends(settings_dep),
+) -> dict[str, int]:
+    """스틸컷 다시 고르기 (후보 프레임 + AI 선택). 선택 방식 개선 전에 분석된 영상 보정용."""
+    if not settings.admin_token or not hmac.compare_digest(x_admin_token, settings.admin_token):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return {"changed": await analyzer.repick_images(video_id)}
 
 
 @app.post("/api/admin/cleanup", response_model=CleanupResponse, tags=["ops"])

@@ -1,6 +1,7 @@
 import type { VideoAnalysisResponse } from '@linktem/types';
 
 import { groupEntries, toEntries } from './grouping';
+import { itemNumbers } from './numbering';
 
 export interface ExportOptions {
   /** 체크하지 않은 항목만 */
@@ -20,6 +21,7 @@ export function formatListText(
   siteUrl?: string,
 ): string {
   const all = toEntries(videos, checked);
+  const numbers = itemNumbers(videos);
   const entries = options.remainingOnly ? all.filter((e) => !e.item.is_checked) : all;
   const done = all.filter((e) => e.item.is_checked).length;
 
@@ -32,7 +34,7 @@ export function formatListText(
     lines.push('', `[${group.title}]`);
     for (const { item } of group.entries) {
       const note = item.edition_note ? ` (${item.edition_note})` : '';
-      lines.push(`${item.is_checked ? '☑' : '☐'} ${item.name_ko}${note}`);
+      lines.push(`${item.is_checked ? '☑' : '☐'} ${numbers[item.id]}. ${item.name_ko}${note}`);
       if (options.includeNotes) {
         if (item.caution) lines.push(`   ⚠️ ${item.caution}`);
         if (item.reason) lines.push(`   💬 ${item.reason}`);

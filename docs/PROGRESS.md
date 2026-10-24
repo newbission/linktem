@@ -75,7 +75,7 @@
 
 - [x] git 저장소 초기화 + 첫 커밋 (2026-10-23)
 - [ ] GitHub private 저장소 생성 + push
-- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql`, `004_item_details.sql` 실행 → Pooler URL 확보
+- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql`, `004_item_details.sql`, `005_report_types.sql` 실행 → Pooler URL 확보
 - [ ] Cloudflare R2 버킷 `linktem` + 공개 도메인 + CORS (PROJECT_SPEC §6) + API 토큰
 - [ ] Render: `render.yaml` Blueprint 로 서비스 생성, `sync: false` 환경변수 입력, 첫 배포에서 `docker build` 확인
 - [ ] UptimeRobot: `https://<api>/health` 5분 간격
@@ -204,6 +204,17 @@
   근거가 없으면 null(지어내지 않도록 프롬프트에 명시), 120자 제한. 앙상블에서는 최빈값(대개 확신도가 가장 높은 회차의 문장).
   `video_items.reason / caution` (004 마이그레이션). 카드·확대 보기·내보내기 텍스트(옵션)에 표시.
 - 기존에 분석된 영상은 다음 앙상블 회차부터 메모가 채워지고, 썸네일은 새로 캡처되는 이미지부터 생긴다.
+
+### ADR-016. 스틸컷 후보 프레임 + 경량 AI 선택, 체크리스트 번호, 제보 유형 확장
+- 문제: Gemini 의 timestamp_sec 은 1초 단위 샘플링이라 1~2초 어긋나 스틸컷에 제품이 없는 경우가 많았다.
+- 스틸컷: 시점 기준 ±1초, 0.5초 간격 5장(`IMAGE_CANDIDATE_OFFSETS`)을 캡처하고, 영상 한 편의 모든 상품을
+  `FRAME_SELECTION_MODEL`(기본 gemini-3.5-flash-lite, 분석 모델과 별도 무료 한도) 1회 호출로 "상품명이 보이는 후보"를 고른다.
+  실패·한도 초과·"보이는 후보 없음"이면 가장 선명한 프레임. 후보 원본은 디스크, 메모리에는 384px 미리보기만.
+  기존 영상 보정: `POST /api/admin/videos/{id}/repick-images` (X-Admin-Token). 실측: 인스타 영상 20개 상품 50초, 20/20 AI 선택.
+- 번호: 먼저 담은 영상부터 등장 순서대로 1, 2, 3… (체크·새 영상 추가에도 기존 번호 유지). 카드·확대 보기·내보내기 텍스트에 표시.
+- 제보 유형(005 마이그레이션): WRONG_PRODUCT·NOT_IN_VIDEO(숨김 임계치·앙상블 감점, SAME 과 1인 1표),
+  WRONG_IMAGE(`IMAGE_REPORT_THRESHOLD`=2 도달 시 사진을 내리고 ±3초 7장 후보에서 다시 선택, 처리한 제보는 비움),
+  WRONG_RETAILER·WRONG_DETAIL·DUPLICATE(검수용 기록). 유형별 집계는 `video_items.report_counts`. 한 사람이 여러 유형 제보·취소 가능.
 
 ## 환경변수 템플릿
 
