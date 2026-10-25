@@ -35,6 +35,8 @@ interface Props {
   onToggle: (itemId: string) => void;
   onSendReports: SendReports;
   onOpenRelated: (url: string) => void;
+  /** '이 영상의 제품은 달라요' — 잘못 연결된 다른 영상 떼기 */
+  onUnlinkRelated?: (itemId: string, related: RelatedVideo) => void;
   /** 스틸컷을 누르면 확대 보기 */
   onOpenImage: (itemId: string) => void;
   /** 간단히 보기에서 펼친 상세: 행에 이미 있는 체크박스·번호·이름은 빼고 테두리 없이 렌더링 */
@@ -53,6 +55,7 @@ export function ItemCard({
   onToggle,
   onSendReports,
   onOpenRelated,
+  onUnlinkRelated,
   onOpenImage,
   embedded = false,
 }: Props) {
@@ -298,19 +301,42 @@ export function ItemCard({
         <div className="mt-3 border-t border-slate-100 pt-2.5">
           <p className="mb-1.5 text-[11px] font-semibold text-slate-500">이 제품이 나온 다른 영상</p>
           <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
-            {related.map((r) => (
-              <button
-                key={r.video_id}
-                type="button"
-                onClick={() => onOpenRelated(r.source_url)}
-                disabled={!online}
-                title={r.source_title}
-                className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-800 ring-1 ring-brand-100 disabled:opacity-50"
-              >
-                <Play size={10} fill="currentColor" aria-hidden />
-                <span className="truncate">{r.creator_name || r.source_title}</span>
-              </button>
-            ))}
+            {related.map((r) => {
+              const label = r.creator_name || r.source_title;
+              return (
+                <span
+                  key={r.other_item_id}
+                  className="inline-flex max-w-[200px] shrink-0 items-center rounded-full bg-brand-50 text-xs font-medium text-brand-800 ring-1 ring-brand-100"
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenRelated(r.source_url)}
+                    disabled={!online}
+                    title={r.source_title}
+                    className={`inline-flex min-w-0 items-center gap-1 py-1 pl-2.5 disabled:opacity-50 ${onUnlinkRelated ? 'pr-1' : 'pr-2.5'}`}
+                  >
+                    <Play size={10} fill="currentColor" aria-hidden />
+                    <span className="truncate">{label}</span>
+                  </button>
+                  {onUnlinkRelated && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`'${label}' 영상의 제품이 이 제품과 다른가요?\n연결을 떼면 내 리스트에서 바로 사라져요.`)) {
+                          onUnlinkRelated(item.id, r);
+                        }
+                      }}
+                      disabled={!online}
+                      className="mr-0.5 rounded-full p-1 text-brand-700/60 hover:bg-brand-100 hover:text-red-500 disabled:opacity-50"
+                      aria-label={`'${label}' 영상과의 연결 떼기 (다른 제품이에요)`}
+                      title="다른 제품이에요 — 연결 떼기"
+                    >
+                      <X size={11} aria-hidden />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
           </div>
         </div>
       )}

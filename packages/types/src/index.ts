@@ -167,6 +167,8 @@ export interface UserFeedbackResponse {
 // ---------------------------------------------------------------------------
 
 export interface RelatedVideo {
+  /** 상대 영상 속 같은 제품 아이템 (연결 떼기에 사용) */
+  other_item_id: string;
   video_id: string;
   source_title: string;
   creator_name: string;
@@ -176,6 +178,21 @@ export interface RelatedVideo {
 /** GET /api/videos/{video_id}/related 응답 — key: ShoppingItem.id */
 export interface RelatedVideosResponse {
   items: Record<string, RelatedVideo[]>;
+}
+
+/** POST /api/related/unlink — "이 영상의 제품은 달라요" (잘못 연결된 같은 제품 떼기) */
+export interface RelatedUnlinkRequest {
+  /** 내 리스트의 아이템 */
+  item_id: string;
+  /** RelatedVideo.other_item_id */
+  other_item_id: string;
+}
+
+export interface RelatedUnlinkResponse {
+  item_id: string;
+  other_item_id: string;
+  /** 여러 명이 떼어 모든 사용자에게서 숨겨졌는지 (요청자에게는 항상 즉시 숨김) */
+  unlinked: boolean;
 }
 
 // ---------------------------------------------------------------------------

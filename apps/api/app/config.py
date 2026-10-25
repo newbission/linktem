@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     feedback_hide_threshold: int = 3
     # '사진이 달라요' 제보가 이만큼 모이면 사진을 내리고 더 넓은 구간에서 다시 고른다
     image_report_threshold: int = 2
+    # '이 영상의 제품은 달라요'가 이만큼 모이면 그 연결을 모든 사용자에게서 숨긴다 (뗀 본인에게는 즉시 숨김)
+    related_unlink_threshold: int = 2
 
     # --- 레이트 리밋 ---
     analyze_rate_limit_per_min: int = 6

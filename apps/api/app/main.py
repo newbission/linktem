@@ -23,6 +23,8 @@ from app.schemas import (
     AnalyzeResponse,
     CleanupResponse,
     HealthResponse,
+    RelatedUnlinkRequest,
+    RelatedUnlinkResponse,
     RelatedVideosResponse,
     UserFeedbackRequest,
     UserFeedbackResponse,
@@ -199,8 +201,27 @@ async def feedback(
 
 
 @app.get("/api/videos/{video_id}/related", response_model=RelatedVideosResponse, tags=["analyze"])
-async def related_videos(video_id: str, analyzer: Analyzer = Depends(get_analyzer)) -> RelatedVideosResponse:
-    return await analyzer.related(video_id)
+async def related_videos(
+    video_id: str,
+    request: Request,
+    analyzer: Analyzer = Depends(get_analyzer),
+    settings: Settings = Depends(settings_dep),
+) -> RelatedVideosResponse:
+    return await analyzer.related(video_id, client_hash(request, settings.client_hash_salt))
+
+
+@app.post("/api/related/unlink", response_model=RelatedUnlinkResponse, tags=["feedback"])
+async def unlink_related(
+    body: RelatedUnlinkRequest,
+    request: Request,
+    analyzer: Analyzer = Depends(get_analyzer),
+    settings: Settings = Depends(settings_dep),
+) -> RelatedUnlinkResponse:
+    """'이 영상의 제품은 달라요' — 잘못 연결된 같은 제품 떼기."""
+    _enforce_rate_limit(request.app.state.feedback_limiter, request)
+    return await analyzer.unlink_related(
+        body.item_id, body.other_item_id, client_hash(request, settings.client_hash_salt)
+    )
 
 
 @app.post("/api/admin/videos/{video_id}/repick-images", tags=["ops"])

@@ -6,9 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { AnalysisJob, RelatedVideo, VideoAnalysisResponse } from '@linktem/types';
 
-import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, waitForServer } from '@/lib/api';
+import { ApiError, analyzeVideo, fetchRelated, lookupVideos, sendFeedback, unlinkRelated, waitForServer } from '@/lib/api';
 import { groupEntries, toEntries, type FilterTab } from '@/lib/grouping';
 import { itemNumbers } from '@/lib/numbering';
+import { visibleRelated } from '@/lib/related';
 import { toggleReport, type SendReports } from '@/lib/reports';
 import { groupKey, useUiPrefs } from '@/lib/ui-prefs';
 import { canonicalVideoKey } from '@/lib/share';
@@ -60,6 +61,7 @@ export function HomeClient() {
     setReports,
     clearItemImage,
     hideItem,
+    setRelatedUnlinked,
   } = useShoppingList();
 
   const [tab, setTab] = useState<FilterTab>('all');
@@ -76,6 +78,8 @@ export function HomeClient() {
 
   const entries = useMemo(() => toEntries(list.videos, list.checked), [list.videos, list.checked]);
   const numbers = useMemo(() => itemNumbers(list.videos), [list.videos]);
+  // 내가 뗀 연결은 서버 응답과 상관없이 이 기기에서 계속 숨긴다 (접속 IP 가 바뀌어도)
+  const shownRelated = useMemo(() => visibleRelated(related, list.unlinked), [related, list.unlinked]);
   const { compact, collapsed, setCompact, toggleCollapsed, setCollapsedMany } = useUiPrefs();
   const groupKeys = useMemo(
     () => (tab === 'all' ? [] : groupEntries(entries, tab).map((g) => groupKey(tab, g.key))),
@@ -293,6 +297,25 @@ export function HomeClient() {
     [list.feedback, list.videos, setReports, hideItem, clearItemImage, refreshVideos],
   );
 
+  /** '이 영상의 제품은 달라요' — 바로 숨기고 서버에 알린다 (실패하면 되돌림) */
+  const handleUnlinkRelated = useCallback(
+    async (itemId: string, target: RelatedVideo) => {
+      setRelatedUnlinked(itemId, target.other_item_id, true);
+      try {
+        const res = await unlinkRelated({ item_id: itemId, other_item_id: target.other_item_id });
+        setNotice(
+          res.unlinked
+            ? '여러 분이 알려주셔서 이 연결을 모두에게서 뗐어요.'
+            : '연결을 뗐어요. 알려주셔서 고마워요!',
+        );
+      } catch (err) {
+        setRelatedUnlinked(itemId, target.other_item_id, false);
+        setError(err instanceof Error ? `연결을 떼지 못했어요. ${err.message}` : '연결을 떼지 못했어요.');
+      }
+    },
+    [setRelatedUnlinked],
+  );
+
   const hasItems = list.videos.length > 0;
   const hasJobs = list.jobs.length > 0;
 
@@ -385,7 +408,7 @@ export function HomeClient() {
               entries={entries}
               tab={tab}
               imageMap={imageMap}
-              related={related}
+              related={shownRelated}
               feedback={list.feedback}
               numbers={numbers}
               online={online}
@@ -395,6 +418,7 @@ export function HomeClient() {
               onToggle={toggleChecked}
               onSendReports={handleSendReports}
               onOpenRelated={analyze}
+              onUnlinkRelated={handleUnlinkRelated}
               onOpenImage={setViewerItemId}
               onRemoveVideo={removeVideo}
             />

@@ -212,7 +212,7 @@ Base URL: `https://<render-service>.onrender.com` · 모든 응답 JSON · 에�
 ### `POST /api/feedback`
 - Request — `UserFeedbackRequest` `{ "item_id": "f3a…", "feedback_type": "DIFFERENT" }`
 - Response 200 — `UserFeedbackResponse` `{ "item_id": "f3a…", "same_count": 0, "different_count": 3, "is_hidden": true }`
-- 규칙: 1인 1표(재투표 시 변경). `different_count ≥ FEEDBACK_HIDE_THRESHOLD` 이고 `different > same × 2` 이면 숨김.
+- 규칙: 1인 1표(재투표 시 변경). `different_count ≥ FEEDBACK_HIDE_THRESHOLD` 이고 'different'가 'same'보다 충분히 많으면 숨김 (정확한 비율·기준은 운영 설정).
   잠기지 않은 영상의 다음 앙상블 회차에서 감점 반영.
 
 ### `GET /api/videos/{video_id}/related`

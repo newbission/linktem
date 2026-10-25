@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalysisJob, FeedbackType, VideoAnalysisResponse } from '@linktem/types';
 
 import { EMPTY_LIST, loadList, normalizeList, saveList, type StoredList } from './list-store';
+import { MAX_UNLINKED, relatedPairKey } from './related';
 import { loadImageObjectUrls, loadSnapshot, offlineSignature, updateSnapshotChecks } from './offline-db';
 
 /** 장보기 리스트 상태 (localStorage 영속) + 오프라인 스냅샷 동기화 */
@@ -169,6 +170,17 @@ export function useShoppingList() {
     [mutate],
   );
 
+  /** '이 영상의 제품은 달라요' — 연결을 떼거나(on) 서버 전송 실패 시 되돌린다(off) */
+  const setRelatedUnlinked = useCallback(
+    (itemId: string, otherItemId: string, unlinked: boolean) =>
+      mutate((prev) => {
+        const key = relatedPairKey(itemId, otherItemId);
+        const rest = prev.unlinked.filter((k) => k !== key);
+        return { ...prev, unlinked: unlinked ? [...rest, key].slice(-MAX_UNLINKED) : rest };
+      }),
+    [mutate],
+  );
+
   const stats = useMemo(() => {
     const total = list.videos.reduce((sum, v) => sum + v.items.length, 0);
     const done = list.videos.reduce((sum, v) => sum + v.items.filter((i) => list.checked[i.id]).length, 0);
@@ -194,6 +206,7 @@ export function useShoppingList() {
     setReports,
     clearItemImage,
     hideItem,
+    setRelatedUnlinked,
   };
 }
 

@@ -124,3 +124,13 @@ docker compose up -d api
 - 재도입 방법은 PROGRESS.md ADR-013 체크리스트에 기록
 - 검증: API 테스트 56개(통합 포함) 통과, web typecheck·lint·build 통과
 - 함께 논의 중: 스틸컷을 썸네일(256p q60, 약 10KB) + 확대용(720p q45, 약 31KB) 두 장으로 나누는 안 — 사용자 확인 대기
+
+## 11. 같은 제품 연결 떼기 · README 재작성 · GitHub 공개 (2026-10-24)
+
+- README 를 일반 사용자 눈높이로 재작성: 애니메이션 SVG 4개(`docs/assets`, `generate_svgs.py` 로 재생성) + Mermaid 4개, 개발자 안내는 접기 섹션
+- GitHub 공개 저장소 생성·푸시: https://github.com/newbission/linktem (이력에 비밀값 없음 확인)
+- 사용자 결정: 제보 기준 등 정확한 수치는 공개 문서에서 숨김 → '일정 수 이상'으로 표기, 운영 값은 대시보드 환경변수 (DEPLOY.md §4)
+- 연결 떼기(ADR-018): 다른 영상 칩의 × → 즉시 숨김 + 서버 기록, 기기 저장본 `unlinked` 로 IP 가 바뀌어도 유지
+- 검증: API 테스트 77개(통합 포함) 통과, web typecheck·lint·build 통과, 프록시 경유 `/api/related/unlink` 응답 확인
+  (앱 DB 에 같은 제품이 겹치는 영상이 없어 화면에서 실제 떼기는 아직 못 해 봄)
+- 별도 커밋: 계정 기능 준비로 `PyJWT[crypto]` 의존성 추가 (아직 코드에서 사용 안 함)

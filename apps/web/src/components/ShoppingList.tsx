@@ -27,6 +27,7 @@ interface Props {
   onToggle: (itemId: string) => void;
   onSendReports: SendReports;
   onOpenRelated: (url: string) => void;
+  onUnlinkRelated: (itemId: string, related: RelatedVideo) => void;
   onOpenImage: (itemId: string) => void;
   onRemoveVideo: (videoId: string) => void;
 }
@@ -52,6 +53,7 @@ export function ShoppingList({
   onToggle,
   onSendReports,
   onOpenRelated,
+  onUnlinkRelated,
   onOpenImage,
   onRemoveVideo,
 }: Props) {
@@ -151,6 +153,7 @@ export function ShoppingList({
                           related={related[item.id]}
                           onSendReports={onSendReports}
                           onOpenRelated={onOpenRelated}
+                          onUnlinkRelated={onUnlinkRelated}
                           onOpenImage={onOpenImage}
                           embedded
                         />
@@ -164,6 +167,7 @@ export function ShoppingList({
                       related={related[item.id]}
                       onSendReports={onSendReports}
                       onOpenRelated={onOpenRelated}
+                      onUnlinkRelated={onUnlinkRelated}
                       onOpenImage={onOpenImage}
                     />
                   );

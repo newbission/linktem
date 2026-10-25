@@ -35,6 +35,7 @@ from app.config import Settings
 from app.schemas import (
     AnalysisJob,
     AnalyzeResponse,
+    RelatedUnlinkResponse,
     RelatedVideo,
     RelatedVideosResponse,
     ShoppingItem,
@@ -938,14 +939,20 @@ class Analyzer:
             except Exception:  # noqa: BLE001 — 실패하면 '사진 준비 중'으로 남고 다음 앙상블 회차에서 다시 캡처
                 logger.exception("recapture failed for item %s", item_id)
 
-    async def related(self, video_id: str) -> RelatedVideosResponse:
+    async def related(self, video_id: str, client_hash: str = "") -> RelatedVideosResponse:
         pool = self._require_pool()
         async with pool.acquire() as conn:
-            rows = await repo.related_videos(conn, _parse_uuid(video_id))
+            rows = await repo.related_videos(
+                conn,
+                _parse_uuid(video_id),
+                client_hash=client_hash,
+                unlink_threshold=self._settings.related_unlink_threshold,
+            )
         items: dict[str, list[RelatedVideo]] = {}
         for r in rows:
             items.setdefault(str(r["item_id"]), []).append(
                 RelatedVideo(
+                    other_item_id=str(r["other_item_id"]),
                     video_id=str(r["video_id"]),
                     source_title=r["source_title"],
                     creator_name=r["creator_name"],
@@ -953,6 +960,19 @@ class Analyzer:
                 )
             )
         return RelatedVideosResponse(items=items)
+
+    async def unlink_related(self, item_id: str, other_item_id: str, client_hash: str) -> RelatedUnlinkResponse:
+        pool = self._require_pool()
+        a, b = _parse_uuid(item_id), _parse_uuid(other_item_id)
+        async with pool.acquire() as conn:
+            count = await repo.unlink_related(conn, a, b, client_hash)
+        if count is None:
+            raise AnalysisError(404, "연결된 영상을 찾을 수 없어요.")
+        return RelatedUnlinkResponse(
+            item_id=item_id,
+            other_item_id=other_item_id,
+            unlinked=count >= self._settings.related_unlink_threshold,
+        )
 
     # ==================================================================
     # helpers

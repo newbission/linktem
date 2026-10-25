@@ -27,6 +27,7 @@ GitHub Actions(매일 03:00 KST) ──▶ POST /api/admin/cleanup
    - `apps/api/migrations/004_item_details.sql` (썸네일 URL, 추천 이유·주의점 메모 컬럼)
    - `apps/api/migrations/005_report_types.sql` (제보 유형 확장)
    - `apps/api/migrations/006_summary_cover_comment.sql` (영상 요약·대표 이미지, 제보 의견)
+   - `apps/api/migrations/007_related_unlink.sql` (잘못 연결된 '같은 제품, 다른 영상' 떼기)
 3. Project Settings → Database → Connection string → **Transaction pooler (6543)** 복사
    🔑 `DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres`
    - 비밀번호에 `@ : / ?` 등이 있으면 URL 인코딩 필요
@@ -64,6 +65,9 @@ GitHub Actions(매일 03:00 KST) ──▶ POST /api/admin/cleanup
 2. `sync: false` 항목 입력: `DATABASE_URL`, `GEMINI_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
    `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_BASE_URL`, (비워둬도 됨) `YTDLP_COOKIES_B64`
    - `ADMIN_TOKEN`, `CLIENT_HASH_SALT` 는 Render 가 자동 생성 → `ADMIN_TOKEN` 값은 §7 에서 사용
+   - 권장: 서비스 → Environment 에서 제보·요청 제한 기준을 코드 기본값과 다른 운영 값으로 직접 추가
+     (`FEEDBACK_HIDE_THRESHOLD`, `IMAGE_REPORT_THRESHOLD`, `RELATED_UNLINK_THRESHOLD`, `ANALYZE_RATE_LIMIT_PER_MIN`).
+     저장소가 공개라 기본값은 누구나 볼 수 있으므로, 악용을 막으려면 실제 값은 대시보드에만 둔다. 값은 정수만 (빈 값이면 서버가 뜨지 않음)
 3. 첫 배포 로그에서 Docker 빌드 → `Linktem API 0.1.0 started (env=production, db=True)` 확인
 4. 확인: `curl https://linktem-api.onrender.com/health` → `{"status":"ok",…}`
    🔑 API 주소 (서비스 이름이 이미 쓰이면 `linktem-api-xxxx.onrender.com` 처럼 달라짐)

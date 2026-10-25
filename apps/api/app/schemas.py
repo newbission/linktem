@@ -125,6 +125,7 @@ class UserFeedbackResponse(BaseModel):
 
 
 class RelatedVideo(BaseModel):
+    other_item_id: str
     video_id: str
     source_title: str
     creator_name: str
@@ -133,6 +134,17 @@ class RelatedVideo(BaseModel):
 
 class RelatedVideosResponse(BaseModel):
     items: dict[str, list[RelatedVideo]]
+
+
+class RelatedUnlinkRequest(BaseModel):
+    item_id: str = Field(..., min_length=1, max_length=64)
+    other_item_id: str = Field(..., min_length=1, max_length=64)
+
+
+class RelatedUnlinkResponse(BaseModel):
+    item_id: str
+    other_item_id: str
+    unlinked: bool
 
 
 # ---------------------------------------------------------------------------

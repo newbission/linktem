@@ -1,6 +1,8 @@
 import type {
   AnalyzeResponse,
   ApiErrorResponse,
+  RelatedUnlinkRequest,
+  RelatedUnlinkResponse,
   RelatedVideosResponse,
   UserFeedbackRequest,
   UserFeedbackResponse,
@@ -141,5 +143,11 @@ export function sendFeedback(body: UserFeedbackRequest): Promise<UserFeedbackRes
 }
 
 export function fetchRelated(videoId: string): Promise<RelatedVideosResponse> {
-  return request<RelatedVideosResponse>(`/api/videos/${encodeURIComponent(videoId)}/related`);
+  // 내가 뗀 연결은 서버가 빼고 주므로 사람마다 응답이 다르다 → 캐시하지 않는다
+  return request<RelatedVideosResponse>(`/api/videos/${encodeURIComponent(videoId)}/related`, { cache: 'no-store' });
+}
+
+/** '이 영상의 제품은 달라요' — 잘못 연결된 같은 제품 떼기 */
+export function unlinkRelated(body: RelatedUnlinkRequest): Promise<RelatedUnlinkResponse> {
+  return request<RelatedUnlinkResponse>('/api/related/unlink', { method: 'POST', body: JSON.stringify(body) });
 }

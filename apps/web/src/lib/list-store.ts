@@ -15,6 +15,8 @@ export interface StoredList {
   jobs: AnalysisJob[];
   /** video_id → 리스트에 추가한 시각 (ms) — '분석한 영상' 목록 표시용 */
   addedAt: Record<string, number>;
+  /** 내가 뗀 '같은 제품, 다른 영상' 연결 — relatedPairKey(아이템, 상대 아이템) 목록 */
+  unlinked: string[];
   updatedAt: number;
 }
 
@@ -27,10 +29,11 @@ export const EMPTY_LIST: StoredList = {
   feedback: {},
   jobs: [],
   addedAt: {},
+  unlinked: [],
   updatedAt: 0,
 };
 
-/** 이전 버전 저장본(jobs/addedAt 없음)이나 오프라인 스냅샷도 현재 형태로 맞춘다 */
+/** 이전 버전 저장본(jobs/addedAt/unlinked 없음)이나 오프라인 스냅샷도 현재 형태로 맞춘다 */
 export function normalizeList(raw: Partial<StoredList>): StoredList {
   return {
     ...EMPTY_LIST,
@@ -38,6 +41,7 @@ export function normalizeList(raw: Partial<StoredList>): StoredList {
     jobs: Array.isArray(raw.jobs) ? raw.jobs : [],
     feedback: migrateReports(raw.feedback),
     addedAt: raw.addedAt && typeof raw.addedAt === 'object' ? raw.addedAt : {},
+    unlinked: Array.isArray(raw.unlinked) ? raw.unlinked.filter((k) => typeof k === 'string') : [],
   };
 }
 

@@ -75,7 +75,7 @@
 
 - [x] git 저장소 초기화 + 첫 커밋 (2026-10-23)
 - [ ] GitHub private 저장소 생성 + push
-- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql`, `004_item_details.sql`, `005_report_types.sql` 실행 → Pooler URL 확보
+- [ ] Supabase 프로젝트 생성 → `001_init.sql`, `002_enable_rls.sql`, `003_analysis_jobs.sql`, `004_item_details.sql`, `005_report_types.sql`, `006_summary_cover_comment.sql`, `007_related_unlink.sql` 실행 → Pooler URL 확보
 - [ ] Cloudflare R2 버킷 `linktem` + 공개 도메인 + CORS (PROJECT_SPEC §6) + API 토큰
 - [ ] Render: `render.yaml` Blueprint 로 서비스 생성, `sync: false` 환경변수 입력, 첫 배포에서 `docker build` 확인
 - [ ] UptimeRobot: `https://<api>/health` 5분 간격
@@ -213,7 +213,7 @@
   기존 영상 보정: `POST /api/admin/videos/{id}/repick-images` (X-Admin-Token). 실측: 인스타 영상 20개 상품 50초, 20/20 AI 선택.
 - 번호: 먼저 담은 영상부터 등장 순서대로 1, 2, 3… (체크·새 영상 추가에도 기존 번호 유지). 카드·확대 보기·내보내기 텍스트에 표시.
 - 제보 유형(005 마이그레이션): WRONG_PRODUCT·NOT_IN_VIDEO(숨김 임계치·앙상블 감점, SAME 과 1인 1표),
-  WRONG_IMAGE(`IMAGE_REPORT_THRESHOLD`=2 도달 시 사진을 내리고 ±3초 7장 후보에서 다시 선택, 처리한 제보는 비움),
+  WRONG_IMAGE(`IMAGE_REPORT_THRESHOLD` 도달 시 사진을 내리고 더 넓은 구간의 후보에서 다시 선택, 처리한 제보는 비움),
   WRONG_RETAILER·WRONG_DETAIL·DUPLICATE(검수용 기록). 유형별 집계는 `video_items.report_counts`. 한 사람이 여러 유형 제보·취소 가능.
 
 ### ADR-017. 영상 요약·대표 이미지, 제보 '보내기', 간단히 보기·묶음 접기
@@ -223,6 +223,16 @@
 - 제보: 메뉴에서 고른 것은 임시 상태 → 의견(선택, 300자) → '보내기'로 전송. 성공한 것만 '보낸 제보'로 저장, 보낸 제보를 빼고 보내면 취소.
 - 간단히 보기: 한 줄 행(체크·번호·이름·에디션·주의 아이콘·판매처), 누르면 자세한 카드로 펼침.
   판매처별/영상별 묶음 접기 + 모두 접기/펼치기. 보기 설정은 기기별(localStorage `linktem:ui:v1`).
+
+### ADR-018. '같은 제품, 다른 영상' 연결 떼기
+- 연결 기준은 그대로: 영문 상품명 정규화 키(`products.normalized_key`)가 같으면 같은 제품.
+  흔한 이름이나 AI 오독으로 다른 제품끼리 묶일 수 있어, 상품 카드의 다른 영상 칩에 × ('다른 제품이에요 — 연결 떼기')를 둔다.
+- 서버: `related_unlinks(item_a < item_b, client_hash)` 쌍 테이블(migration 007). 어느 쪽에서 떼도 같은 연결로 집계.
+  `GET /api/videos/{id}/related` 는 요청자가 뗀 연결을 빼고, `RELATED_UNLINK_THRESHOLD` 이상 모이면 모두에게서 뺀다.
+  `POST /api/related/unlink` 는 실제로 같은 제품으로 연결된 쌍만 받는다(아니면 404), 제보와 같은 레이트 리밋.
+- 클라이언트: 누르면 바로 숨기고(낙관적) 실패 시 되돌림. 뗀 쌍은 리스트 저장본 `unlinked` 에도 남겨,
+  익명 해시(IP+UA)가 바뀌어도 이 기기에서는 계속 숨긴다 → 계정 동기화 시 함께 옮길 데이터.
+- 공개 문서에는 제보·연결 떼기 기준과 요청 제한의 정확한 수치를 적지 않는다(운영 값은 대시보드 환경변수).
 
 ## 환경변수 템플릿
 
@@ -247,8 +257,9 @@
 | `R2_BUCKET` | `linktem` | |
 | `R2_PUBLIC_BASE_URL` | `https://img.linktem.app` | 커스텀 도메인 또는 r2.dev |
 | `IMAGE_SUPERSEDED_GRACE_DAYS` / `IMAGE_TTL_DAYS` | `7` / `90` | ADR-006 |
-| `ENSEMBLE_MAX_RUNS` / `FEEDBACK_HIDE_THRESHOLD` | `5` / `3` | |
-| `ANALYZE_RATE_LIMIT_PER_MIN` | `6` | IP 당 |
+| `ENSEMBLE_MAX_RUNS` | `5` | 교차 검증 최대 횟수 (화면에 n/5 로 표시) |
+| `FEEDBACK_HIDE_THRESHOLD` / `IMAGE_REPORT_THRESHOLD` / `RELATED_UNLINK_THRESHOLD` | (운영 값 비공개) | 숨김 · 사진 재선택 · 연결 떼기 기준 (ADR-016, ADR-018) |
+| `ANALYZE_RATE_LIMIT_PER_MIN` | (운영 값 비공개) | IP 당 분당 분석 요청 |
 
 ### apps/web (`apps/web/.env.example`)
 

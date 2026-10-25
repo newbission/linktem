@@ -21,6 +21,8 @@ MODELS = [
     "UserFeedbackResponse",
     "RelatedVideo",
     "RelatedVideosResponse",
+    "RelatedUnlinkRequest",
+    "RelatedUnlinkResponse",
     "HealthResponse",
 ]
 

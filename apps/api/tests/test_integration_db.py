@@ -491,3 +491,30 @@ async def test_report_comment_is_saved(env) -> None:
             UUID(item.id),
         )
     assert comment == "1kg 이 아니라 500g 이에요"
+
+
+async def test_related_link_can_be_unlinked(env) -> None:
+    """같은 제품으로 연결된 다른 영상: 뗀 본인에게는 즉시, 여러 명이 떼면 모두에게서 숨김."""
+    analyzer, pool, gemini, storage, downloader, settings = env
+    first = await resolve(analyzer, URL, "client-1")
+    other = await resolve(analyzer, "https://www.youtube.com/shorts/ccccccccccc", "client-2")
+    mine = next(i for i in first.items if i.name_en == GYOZA[1])
+
+    related = await analyzer.related(first.video_id, "viewer")
+    link = related.items[mine.id][0]
+    assert link.video_id == other.video_id
+
+    r = await analyzer.unlink_related(mine.id, link.other_item_id, "voter-1")
+    assert not r.unlinked
+    assert mine.id not in (await analyzer.related(first.video_id, "voter-1")).items, "뗀 본인에게는 바로 숨김"
+    assert mine.id in (await analyzer.related(first.video_id, "viewer")).items, "다른 사람에게는 아직 보임"
+
+    # 반대편 영상에서 떼도 같은 연결로 집계
+    r = await analyzer.unlink_related(link.other_item_id, mine.id, "voter-2")
+    assert r.unlinked
+    assert mine.id not in (await analyzer.related(first.video_id, "viewer")).items
+
+    with pytest.raises(AnalysisError) as err:
+        ramen = next(i for i in first.items if i.name_en == RAMEN[1])
+        await analyzer.unlink_related(mine.id, ramen.id, "voter-3")  # 같은 제품으로 연결된 쌍이 아님
+    assert err.value.status_code == 404

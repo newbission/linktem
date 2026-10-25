@@ -414,24 +414,71 @@ async def get_item_for_recapture(conn: asyncpg.Connection, item_id: UUID) -> asy
 # ---------------------------------------------------------------------------
 
 
-async def related_videos(conn: asyncpg.Connection, video_id: UUID, per_item: int = 5) -> list[asyncpg.Record]:
+async def related_videos(
+    conn: asyncpg.Connection,
+    video_id: UUID,
+    *,
+    client_hash: str = "",
+    unlink_threshold: int = 2,
+    per_item: int = 5,
+) -> list[asyncpg.Record]:
+    """같은 제품(products.id)이 나온 다른 영상. 여러 명이 뗀 연결과, 이 요청자가 직접 뗀 연결은 뺀다."""
     return await conn.fetch(
         """
-        select item_id, video_id, source_title, creator_name, source_url
+        select item_id, other_item_id, video_id, source_title, creator_name, source_url
           from (
-            select vi.id as item_id, v.id as video_id, v.source_title, v.creator_name, v.source_url,
+            select vi.id as item_id, o.id as other_item_id, v.id as video_id, v.source_title, v.creator_name,
+                   v.source_url,
                    row_number() over (partition by vi.id order by v.last_requested_at desc) as rn
               from video_items vi
               join video_items o on o.product_id = vi.product_id and o.video_id <> vi.video_id
                                 and o.is_hidden = false
               join videos v on v.id = o.video_id
              where vi.video_id = $1 and vi.is_hidden = false
+               and not exists (
+                   select 1 from related_unlinks u
+                    where u.item_a = least(vi.id, o.id) and u.item_b = greatest(vi.id, o.id)
+                      and (u.client_hash = $3
+                           or (select count(*) from related_unlinks c
+                                where c.item_a = u.item_a and c.item_b = u.item_b) >= $4)
+               )
           ) ranked
          where rn <= $2
          order by item_id, rn
         """,
         video_id,
         per_item,
+        client_hash,
+        unlink_threshold,
+    )
+
+
+async def unlink_related(
+    conn: asyncpg.Connection, item_id: UUID, other_item_id: UUID, client_hash: str
+) -> int | None:
+    """'이 영상의 제품은 달라요' 기록 후 그 연결의 누적 수. 같은 제품으로 연결된 쌍이 아니면 None."""
+    linked = await conn.fetchval(
+        """
+        select 1 from video_items a join video_items b on a.product_id = b.product_id and a.video_id <> b.video_id
+         where a.id = $1 and b.id = $2
+        """,
+        item_id,
+        other_item_id,
+    )
+    if not linked:
+        return None
+    first, second = sorted([item_id, other_item_id])
+    await conn.execute(
+        """
+        insert into related_unlinks (item_a, item_b, client_hash) values ($1, $2, $3)
+        on conflict (item_a, item_b, client_hash) do nothing
+        """,
+        first,
+        second,
+        client_hash,
+    )
+    return await conn.fetchval(
+        "select count(*) from related_unlinks where item_a = $1 and item_b = $2", first, second
     )
 
 
